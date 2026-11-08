@@ -4,9 +4,14 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ["docs/**", "scraper/**"]
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: scrape
@@ -15,22 +20,31 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Scarica i dati
-        run: python scraper/scrape.py
+      - name: Prepara il sito
+        run: |
+          mkdir -p _site
+          cp -r docs/. _site/
+          rm -rf _site/data
 
-      - name: Salva nel repository
+      - name: Scarica i dati e calcola gli indicatori
+        run: python scraper/scrape.py --out _site/data
+
+      - name: Salva lo storico nel repository
         run: |
           git config user.name  "areu-bot"
           git config user.email "areu-bot@users.noreply.github.com"
-          git add data docs/data
+          git add data
           if git diff --cached --quiet; then
             echo "Nessun cambiamento"
             exit 0
@@ -41,3 +55,12 @@ jobs:
             git pull --rebase -X theirs && sleep 3
           done
           exit 1
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v5
