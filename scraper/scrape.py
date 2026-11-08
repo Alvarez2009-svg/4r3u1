@@ -306,6 +306,119 @@ class Calc:
         return out
 
 
+COLORI = [("rosso", "rosso", "rossi"), ("giallo", "giallo", "gialli"), ("verde", "verde", "verdi"),
+          ("bianco", "bianco", "bianchi")]
+AVANZATI = ("msi", "msa")      # MSA1, MSA2
+
+
+def deduci_codici(tipi: dict, codici: dict, *, no_verde_avanzati: bool = False,
+                  coppia: str | None = None, fuori_prima: dict | None = None):
+    """Prova a ricostruire il codice colore di ciascun tipo di mezzo partito tra due letture.
+
+    tipi   = {"msb": 3, "msi": 1, ...}      mezzi partiti per tipo
+    codici = {"rosso": 1, "giallo": 3, ...} mezzi partiti per codice (stessa somma)
+    Regole opzionali (molto probabili, non certe):
+      no_verde_avanzati: MSA1/MSA2 non partono in codice verde o bianco
+      coppia="forte":  ogni MSA1/MSA2 ha un MSB partito nello stesso intervallo con lo stesso colore
+      coppia="debole": ogni MSA1/MSA2 ha lo stesso colore di un MSB partito ora OPPURE di un mezzo
+                       che era gia' fuori (fuori_prima = mezzi in corso per colore alla lettura precedente)
+    Restituisce {tipo: {colore: n}} se esiste UNA SOLA ricostruzione compatibile, altrimenti None.
+    """
+    tipi = {k: v for k, v in tipi.items() if v}
+    codici = {k: v for k, v in codici.items() if v}
+    if not tipi or sum(tipi.values()) != sum(codici.values()):
+        return None
+    col = [c for c, _, _ in COLORI if codici.get(c)]
+    ordine = [k for k in tipi if k != "msb"] + (["msb"] if "msb" in tipi else [])
+    soluzioni = []
+
+    def ripartizioni(n, colori, resto, tipo):
+        vietati = ("verde", "bianco") if no_verde_avanzati and tipo in AVANZATI else ()
+        colori = [c for c in colori if c not in vietati]
+        if not colori:
+            return
+        if len(colori) == 1:
+            if n <= resto[colori[0]]:
+                yield {colori[0]: n}
+            return
+        c = colori[0]
+        for x in range(min(n, resto[c]), -1, -1):
+            for r in ripartizioni(n - x, colori[1:], resto, None if not vietati else "msb"):
+                yield {c: x, **r}
+
+    def valida(parz):
+        if coppia is None:
+            return True
+        msb = parz.get("msb", {})
+        for c in col:
+            av = sum(parz.get(k, {}).get(c, 0) for k in AVANZATI)
+            limite = msb.get(c, 0) + ((fuori_prima or {}).get(c, 0) if coppia == "debole" else 0)
+            if av > limite:
+                return False
+        return True
+
+    def cerca(i, resto, parz):
+        if len(soluzioni) > 1:
+            return
+        if i == len(ordine):
+            if all(v == 0 for v in resto.values()) and valida(parz):
+                soluzioni.append({k: {c: n for c, n in v.items() if n} for k, v in parz.items()})
+            return
+        t = ordine[i]
+        for rip in ripartizioni(tipi[t], col, resto, t):
+            nuovo = {c: resto[c] - rip.get(c, 0) for c in col}
+            cerca(i + 1, nuovo, {**parz, t: rip})
+
+    cerca(0, dict(codici), {})
+    return soluzioni[0] if len(soluzioni) == 1 else None
+
+
+def ricostruisci_codici(tipi: dict, codici: dict, *, de, fuori_prima, controllo_scorte):
+    """Applica le regole in ordine di affidabilita'. Restituisce (ricostruzione, certezza) o (None, None).
+
+    certezza: "certa"     -> nessuna supposizione (un solo tipo o un solo colore, ecc.)
+              "alta"      -> regole molto probabili, confermata anche dalla versione 'debole' della coppia
+              "stimata"   -> serve la versione 'forte' della coppia, oppure i contatori non erano verificabili
+    controllo_scorte: True = superato, False = fallito (cambio di colore o rinforzo: non dedurre),
+                      None = non verificabile (contatori della zona non allineati)
+    """
+    if controllo_scorte is False:
+        return None, None
+    tipi = {k: v or 0 for k, v in tipi.items()}
+    n_av = sum(tipi.get(k, 0) for k in AVANZATI)
+    dm = sum(tipi.values())
+    extra = dm - de if de is not None else None
+    colori_diversi = sum(1 for v in codici.values() if v)
+    # regola 2: un solo evento nuovo ma colori diversi -> c'e' un rinforzo o un cambio di colore
+    coppia_ok = not (de is not None and de <= 1 and dm >= 2 and colori_diversi >= 2)
+    rip, cert = deduci_codici(tipi, codici), "certa"
+    if not rip and n_av:
+        rip, cert = deduci_codici(tipi, codici, no_verde_avanzati=True, coppia="debole",
+                                  fuori_prima=fuori_prima), "alta"
+        if not rip and coppia_ok and tipi.get("msb", 0) >= n_av and extra is not None and extra >= n_av:
+            rip, cert = deduci_codici(tipi, codici, no_verde_avanzati=True, coppia="forte"), "stimata"
+    if not rip:
+        return None, None
+    # contatori non verificabili: un cambio di colore resterebbe invisibile (capita in ~1 intervallo
+    # su 100); non e' "certa" ma resta affidabile, quindi scende ad "alta" senza etichetta
+    if controllo_scorte is None and cert == "certa":
+        cert = "alta"
+    return rip, cert
+
+
+def testo_codici(rip: dict) -> str:
+    """{"msb": {"giallo": 2, "verde": 1}, "msa": {"rosso": 1}} -> '2 MSB gialli, 1 MSB verde, 1 MSA2 rosso'"""
+    nomi = {"msb": "MSB", "msi": "MSA1", "msa": "MSA2", "elisoccorso": "elisoccorso", "mezzi_altro": "altro mezzo"}
+    parti = []
+    for t in ("msb", "msi", "msa", "elisoccorso", "mezzi_altro"):
+        for c, sg, pl in COLORI:
+            n = rip.get(t, {}).get(c)
+            if n:
+                nome = nomi[t] if n == 1 or t != "mezzi_altro" else "altri mezzi"
+                parti.append(f"{n} {nome} {sg if n == 1 else pl}")
+    return ", ".join(parti)
+
+
 def poisson_coda(k: int, lam: float) -> float:
     """P(X >= k) per X ~ Poisson(lam)."""
     import math
@@ -584,7 +697,34 @@ def build(now: datetime, finals: dict) -> dict:
                                 + (f" ({elenco})" if tipi else ""))
                 elif tipi:
                     head.append(elenco + " inviati")
-                if dr:
+                # codici colore per tipo di mezzo: solo se la ricostruzione e' univoca
+                rip = cert = None
+                if dm:
+                    TIPI = ("msb", "msi", "msa", "elisoccorso", "mezzi_altro")
+                    d_tipi = {k: C.delta(a, t0, t1, k) for k in TIPI}
+                    d_cod = {c: C.delta(a, t0, t1, c) for c, _, _ in COLORI}
+                    if all(v is not None for v in d_tipi.values()) and all(v is not None for v in d_cod.values()):
+                        allineati = (i0 and i1 and o0 and o1 and o0.get("day") == o1.get("day")
+                                     and i0.get("agg") == o0.get("agg") and i1.get("agg") == o1.get("agg"))
+                        # regola 1: per ogni colore e tipo i rientrati (partiti - variazione in corso)
+                        # non possono essere negativi; se lo sono c'e' stato un cambio di colore
+                        controllo = None
+                        if allineati:
+                            controllo = True
+                            for k, dk in list(d_cod.items()) + list(d_tipi.items()):
+                                if i0.get(k) is None or i1.get(k) is None:
+                                    controllo = None
+                                    break
+                                if dk - (i1[k] - i0[k]) < 0:
+                                    controllo = False
+                                    break
+                        fuori_prima = {c: (i0.get(c) or 0) for c, _, _ in COLORI} if i0 else {}
+                        rip, cert = ricostruisci_codici(d_tipi, d_cod, de=de, fuori_prima=fuori_prima,
+                                                        controllo_scorte=controllo)
+                if rip:
+                    head = [f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}: {testo_codici(rip)}"
+                            + (" (codici stimati)" if cert == "stimata" else "")]
+                elif dr:
                     head.append(f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
                 # rientri = partenze - variazione dei mezzi in corso; solo se i due contatori
                 # della zona sono allineati (stesso orario di aggiornamento) e il conto torna
