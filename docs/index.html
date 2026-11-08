@@ -263,7 +263,9 @@ footer a{color:var(--text-2)}
     </section>
 
     <section class="panel c5">
-      <div class="ph"><span class="when">Oggi · dalle 00:00</span><h3>Perché si chiama il 118</h3><span class="help">Eventi per motivo da mezzanotte. Il segno chiaro indica ieri alla stessa ora.</span></div>
+      <div class="ph"><span class="when now" id="motWhen"><span class="live-dot"></span>Adesso</span><h3>Perché si chiama il 118</h3>
+        <div class="seg" id="motMode"><button data-v="now" aria-pressed="true">Adesso</button><button data-v="day" aria-pressed="false">Oggi</button></div>
+        <span class="help" id="motHelp"></span></div>
       <div class="chart" id="motivi"></div>
       <div class="readout" id="motiviRead"></div>
     </section>
@@ -325,7 +327,7 @@ const TAGS = { // registro eventi: colore e rilevanza
 };
 
 // ======================================================== stato e utilità
-const S = { focus: "LOMBARDIA", hours: 24, feedMode: "top", sort: ["mezzi", -1],
+const S = { focus: "LOMBARDIA", hours: 24, feedMode: "top", motMode: "now", sort: ["mezzi", -1],
             L: null, ser: null, arr: null, feed: null, base: null, loadedAt: 0 };
 const $ = id => document.getElementById(id);
 const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -628,6 +630,10 @@ document.querySelectorAll("#feedMode button").forEach(b => b.onclick = () => {
   S.feedMode = b.dataset.v; document.querySelectorAll("#feedMode button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderFeed();
 });
 
+document.querySelectorAll("#motMode button").forEach(b => b.onclick = () => {
+  S.motMode = b.dataset.v; document.querySelectorAll("#motMode button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderMotivi();
+});
+
 // ======================================================== grafico andamento
 function niceTicks(max, n){ const raw = max / n, p = 10 ** Math.floor(Math.log10(raw || 1)); const step = [1,2,2.5,5,10].map(k => k*p).find(k => k >= raw) || p*10; const t = []; for(let v = 0; v <= max + 1e-9; v += step) t.push(Math.round(v*100)/100); return t; }
 function runs(arr, ok){ const out = []; let cur = []; arr.forEach(p => { if(ok(p)) cur.push(p); else if(cur.length){ out.push(cur); cur = []; } }); if(cur.length) out.push(cur); return out; }
@@ -732,8 +738,13 @@ function renderHourly(){
 
 // ======================================================== motivi
 function renderMotivi(){
-  const f = F(), o = f.oggi, y = f.ieri_stessa_ora, wrap = $("motivi");
-  if(!o){ wrap.innerHTML = `<div class="empty-note">Nessun dato di oggi.</div>`; $("motiviRead").innerHTML = ""; return; }
+  const f = F(), now = S.motMode === "now", wrap = $("motivi");
+  const o = now ? f.adesso : f.oggi, y = now ? null : f.ieri_stessa_ora;
+  $("motWhen").className = now ? "when now" : "when";
+  $("motWhen").innerHTML = now ? `<span class="live-dot"></span>Adesso` : "Oggi · dalle 00:00";
+  $("motHelp").textContent = now ? "Eventi in corso in questo momento, per motivo." : "Eventi per motivo da mezzanotte. Il segno chiaro indica ieri alla stessa ora.";
+  const has = o && MOTIVI.some(([k]) => o[k] != null);
+  if(!has){ wrap.innerHTML = `<div class="empty-note">${now ? "I motivi degli eventi in corso compaiono dalla prossima lettura (entro 10 minuti)." : "Nessun dato di oggi."}</div>`; $("motiviRead").innerHTML = ""; return; }
   const data = MOTIVI.map(([k, l]) => ({k, l, a: o[k] || 0, b: y ? (y[k] || 0) : null})).filter(d => d.a > 0 || (d.b || 0) > 0).sort((p, q) => q.a - p.a).slice(0, 9);
   const W = Math.max(300, wrap.clientWidth), rowH = 22, gap = 7, lw = Math.min(170, W * .42), rw = 40, iw = W - lw - rw;
   const H = data.length * (rowH + gap);
@@ -750,7 +761,7 @@ function renderMotivi(){
   s += `</svg>`;
   wrap.innerHTML = s;
   const tot = data.reduce((p, d) => p + d.a, 0) || 1;
-  const read = d => `<span class="when2">${esc(d.l)}</span><span>Oggi <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}%)</span><span>Ieri a quest'ora <b>${fmt(d.b)}</b></span>${d.b ? `<span class="${devClass(pct(d.a, d.b)) === "up" ? "delta-up" : devClass(pct(d.a, d.b)) === "down" ? "delta-down" : "delta-flat"}">${pct(d.a,d.b) >= 0 ? "+" : ""}${Math.round(pct(d.a,d.b))}%</span>` : ""}`;
+  const read = d => now ? `<span class="when2">${esc(d.l)}</span><span>In corso adesso <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}% degli eventi)</span>${f.oggi ? `<span>Oggi in tutto <b>${fmt(f.oggi[d.k])}</b></span>` : ""}` : `<span class="when2">${esc(d.l)}</span><span>Oggi <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}%)</span><span>Ieri a quest'ora <b>${fmt(d.b)}</b></span>${d.b ? `<span class="${devClass(pct(d.a, d.b)) === "up" ? "delta-up" : devClass(pct(d.a, d.b)) === "down" ? "delta-down" : "delta-flat"}">${pct(d.a,d.b) >= 0 ? "+" : ""}${Math.round(pct(d.a,d.b))}%</span>` : ""}`;
   $("motiviRead").innerHTML = data.length ? read(data[0]) : "";
   wrap.querySelectorAll(".mh").forEach(r => { const d = data[+r.dataset.i]; r.addEventListener("pointerenter", () => $("motiviRead").innerHTML = read(d)); r.addEventListener("pointerdown", () => $("motiviRead").innerHTML = read(d)); });
 }

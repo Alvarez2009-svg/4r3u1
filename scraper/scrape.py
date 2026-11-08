@@ -59,8 +59,8 @@ NUM_FIELDS = [
 CSV_HEADER = ["snapshot", "api_updated"] + TEXT_FIELDS + NUM_FIELDS
 
 ADESSO_KEYS = ["missioni", "totale_missioni", "rosso", "giallo", "verde", "bianco",
-               "msb", "msa", "msi", "elisoccorso", "mezzi_altro"]
-OGGI_KEYS = ADESSO_KEYS + ["soccorso_alpino"] + MOTIVI
+               "msb", "msa", "msi", "elisoccorso", "mezzi_altro"] + MOTIVI
+OGGI_KEYS = ADESSO_KEYS + ["soccorso_alpino"]
 
 # eventi che vale la pena segnalare nel feed: (singolare, plurale)
 NOTABILI = {
