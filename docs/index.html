@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>118 Lombardia · live</title>
+<style>
+.viz-root{
+  color-scheme:dark;
+  --bg:#121211; --surface-1:#1a1a19; --surface-2:#232321; --border:#33332f;
+  --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8d8c85;
+  --grid:#2c2c29; --accent:#3987e5; --accent-soft:rgba(57,135,229,.18);
+  --band:rgba(195,194,183,.22); --mid:#383835;
+  --div-neg2:#3987e5; --div-neg1:#2a5689; --div-pos1:#8a3a3a; --div-pos2:#e66767;
+  --c-rosso:#e66767; --c-giallo:#c98500; --c-verde:#199e70; --c-bianco:#c3c2b7;
+}
+@media (prefers-color-scheme: light){
+  :root:where(:not([data-theme="dark"])) .viz-root{
+    color-scheme:light;
+    --bg:#f3f2ef; --surface-1:#fcfcfb; --surface-2:#f0efec; --border:#dddcd6;
+    --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#76756f;
+    --grid:#e6e5e0; --accent:#2a78d6; --accent-soft:rgba(42,120,214,.12);
+    --band:rgba(82,81,78,.10); --mid:#f0efec;
+    --div-neg2:#2a78d6; --div-neg1:#9ec5f4; --div-pos1:#f2a8a7; --div-pos2:#e34948;
+    --c-rosso:#e34948; --c-giallo:#eda100; --c-verde:#1baf7a; --c-bianco:#a9a8a1;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.viz-root{min-height:100vh;background:var(--bg);color:var(--text-primary);padding:20px clamp(12px,3vw,32px) 40px;max-width:1280px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px;margin-bottom:18px}
+h1{font-size:22px;margin:0;font-weight:650;letter-spacing:-.01em}
+h1 .live{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--c-rosso);margin-right:8px;vertical-align:2px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion: reduce){h1 .live{animation:none}}
+.meta{color:var(--text-secondary);font-size:13px}
+.meta b{color:var(--text-primary);font-weight:600}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;min-width:0}
+.card h2{font-size:13px;font-weight:600;margin:0 0 2px;color:var(--text-primary)}
+.card .sub{font-size:12px;color:var(--text-muted);margin:0 0 12px}
+.kpi{grid-column:span 3}
+.kpi .label{font-size:12px;color:var(--text-secondary)}
+.kpi .value{font-size:34px;font-weight:650;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+.kpi .delta{font-size:12px;color:var(--text-secondary);margin-top:2px}
+.delta .up{color:var(--c-rosso)} .delta .down{color:var(--accent)}
+.span5{grid-column:span 5}.span7{grid-column:span 7}.span6{grid-column:span 6}.span12{grid-column:span 12}
+@media (max-width:900px){.kpi{grid-column:span 6}.span5,.span7,.span6{grid-column:span 12}}
+.controls{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{background:transparent;color:var(--text-secondary);border:0;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--text-primary);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.tile{aspect-ratio:1.15;border-radius:8px;padding:7px 8px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;border:2px solid transparent;color:var(--text-primary);background:var(--mid);transition:border-color .15s;min-width:0}
+.tile:hover{border-color:var(--text-muted)}
+.tile.sel{border-color:var(--text-primary)}
+.tile .n{font-size:11px;font-weight:600;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .v{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1}
+.tile .d{font-size:11px;opacity:.9}
+.tile.empty{visibility:hidden}
+@media (max-width:520px){.tiles{gap:4px}.tile{padding:5px;aspect-ratio:.9}.tile .n{font-size:9.5px;letter-spacing:0}.tile .v{font-size:18px}.tile .d{font-size:9.5px}}
+.tile.dark-ink{color:#0b0b0b}.tile.light-ink{color:#fff}
+.legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text-secondary);margin-top:10px}
+.legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.ramp{display:inline-flex;gap:2px}.ramp span{width:18px;height:10px;border-radius:2px}
+svg{display:block;width:100%;overflow:visible}
+svg text{fill:var(--text-muted);font-size:11px;font-family:inherit}
+.tooltip{position:fixed;pointer-events:none;background:var(--surface-2);border:1px solid var(--border);color:var(--text-primary);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:10;display:none;min-width:140px}
+.tooltip .t{color:var(--text-secondary);margin-bottom:4px}
+.tooltip .row{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+.note{font-size:12px;color:var(--text-muted);margin-top:8px}
+details{margin-top:14px}
+summary{cursor:pointer;color:var(--text-secondary);font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--grid);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--text-secondary);font-weight:600}
+footer{margin-top:22px;font-size:12px;color:var(--text-muted)}
+footer a{color:var(--text-secondary)}
+.err{background:var(--surface-2);border:1px solid var(--c-rosso);padding:10px 12px;border-radius:8px;margin-bottom:14px;display:none}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <h1><span class="live" aria-hidden="true"></span>118 Lombardia · missioni in tempo reale</h1>
+    <div class="meta">Dati AREU aggiornati alle <b id="upd">–</b> · prossimo controllo tra <span id="cd">–</span></div>
+  </header>
+  <div class="err" id="err"></div>
+
+  <div class="grid">
+    <div class="card kpi"><div class="label">Missioni in corso adesso</div><div class="value" id="k1">–</div><div class="delta" id="k1d"></div></div>
+    <div class="card kpi"><div class="label">di cui codice rosso</div><div class="value" id="k2">–</div><div class="delta" id="k2d"></div></div>
+    <div class="card kpi"><div class="label">Elisoccorsi in missione</div><div class="value" id="k3">–</div><div class="delta" id="k3d"></div></div>
+    <div class="card kpi"><div class="label">Missioni da mezzanotte</div><div class="value" id="k4">–</div><div class="delta" id="k4d"></div></div>
+
+    <div class="card span5">
+      <h2>Le 12 zone (AAT)</h2>
+      <p class="sub">Disposte come sulla cartina. Clicca una zona per vederne l'andamento.</p>
+      <div class="controls"><div class="seg" id="tileMode">
+        <button aria-pressed="true" data-v="dev">Rispetto al solito</button>
+        <button aria-pressed="false" data-v="abs">Missioni in corso</button>
+      </div></div>
+      <div class="tiles" id="tiles"></div>
+      <div class="legend" id="tileLegend"></div>
+    </div>
+
+    <div class="card span7">
+      <h2 id="trendTitle">Missioni in corso · Lombardia</h2>
+      <p class="sub" id="trendSub">La fascia grigia è il solito per quel giorno della settimana e quell'ora.</p>
+      <div class="controls"><div class="seg" id="range">
+        <button aria-pressed="true" data-v="24">24 ore</button>
+        <button aria-pressed="false" data-v="168">7 giorni</button>
+      </div></div>
+      <div id="trend"></div>
+      <div class="note" id="trendNote"></div>
+    </div>
+
+    <div class="card span6">
+      <h2>Gravità delle missioni in corso</h2>
+      <p class="sub">Codice colore assegnato dalla centrale, per zona.</p>
+      <div id="codes"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--c-rosso)"></i>Rosso · molto critico</span>
+        <span><i class="sw" style="background:var(--c-giallo)"></i>Giallo · mediamente critico</span>
+        <span><i class="sw" style="background:var(--c-verde)"></i>Verde · poco critico</span>
+        <span><i class="sw" style="background:var(--c-bianco)"></i>Bianco · non critico</span>
+      </div>
+    </div>
+
+    <div class="card span6">
+      <h2 id="motTitle">Motivi di intervento oggi · Lombardia</h2>
+      <p class="sub">Missioni da mezzanotte, per motivo.</p>
+      <div id="motivi"></div>
+    </div>
+
+    <div class="card span12">
+      <h2>Tabella</h2>
+      <p class="sub">Tutti i numeri delle missioni in corso, zona per zona.</p>
+      <details><summary>Mostra la tabella</summary><div id="table"></div></details>
+    </div>
+  </div>
+
+  <footer>
+    Fonte: <a href="https://www.areu.lombardia.it/web/home/missioni-aat-real-time" target="_blank" rel="noopener">AREU Lombardia – Missioni 118</a>.
+    Progetto personale, non ufficiale: per dati certificati fare riferimento ad AREU.
+    I dati vengono letti ogni ~10 minuti; "il solito" è la mediana delle settimane precedenti alla stessa ora.
+  </footer>
+  <div class="tooltip" id="tip" role="status"></div>
+</div>
+
+<script>
+(() => {
+const REFRESH_S = 120;
+const LAYOUT = [ // griglia 5x4, approssimazione geografica
+  [null,null,"SONDRIO",null,null],
+  ["VARESE","COMO","LECCO","BERGAMO","BRESCIA"],
+  [null,"MILANO","MONZA",null,null],
+  [null,"PAVIA","LODI","CREMONA","MANTOVA"],
+];
+const NICE = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : s;
+const MOTIVI = [["medico_acuto","Medico acuto"],["caduta","Caduta"],["incidente_stradale","Incidente stradale"],
+  ["evento_violento","Evento violento"],["intossicazione","Intossicazione"],["infortunio","Infortunio"],
+  ["soccorso_persona","Soccorso persona"],["incidente_montano","Incidente in montagna"],
+  ["incidente_acqua","Incidente in acqua"],["animali","Animali"],["evento_massa","Evento di massa"],
+  ["calamita_naturale","Calamità naturale"],["non_noto","Non noto"]];
+const fmt = n => n == null ? "–" : Math.round(n).toLocaleString("it-IT");
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.querySelector(".viz-root")).getPropertyValue(v).trim();
+const state = { sel: "REGIONE", hours: 24, tileMode: "dev", latest: null, hist: null, base: null };
+const tip = $("tip");
+
+// ---------- tempo: le stringhe sono "2026-11-08T20:50+01:00" in ora italiana
+const wdHour = iso => {
+  const y=+iso.slice(0,4), m=+iso.slice(5,7), d=+iso.slice(8,10), h=+iso.slice(11,13);
+  return [(new Date(Date.UTC(y,m-1,d)).getUTCDay()+6)%7, h]; // lun=0 come Python
+};
+const hhmm = iso => iso.slice(11,16);
+const dayLabel = iso => new Date(iso).toLocaleDateString("it-IT",{weekday:"short",day:"numeric"});
+
+function baselineFor(aat, iso){
+  const b = state.base?.aat?.[aat]; if(!b) return null;
+  const [wd,h] = wdHour(iso); const v = b[`${wd}-${h}`];
+  return v && v[2] >= 2 ? {med:v[0], p90:v[1], n:v[2]} : null;
+}
+
+// ---------- fetch
+async function getJSON(name){
+  const r = await fetch(`data/${name}?t=${Date.now()}`, {cache:"no-store"});
+  if(!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+  return r.json();
+}
+async function load(){
+  try{
+    const [latest, hist, base] = await Promise.all([getJSON("latest.json"), getJSON("history.json"), getJSON("baseline.json")]);
+    const firstLoad = !state.latest;
+    Object.assign(state, {latest, hist, base});
+    $("err").style.display = "none";
+    if(firstLoad && (base.giorni_di_storico || 0) < 3){ // senza storico il confronto non ha senso
+      state.tileMode = "abs";
+      $("tileMode").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === "abs"));
+    }
+    render();
+  }catch(e){
+    $("err").textContent = "Non riesco a caricare i dati: " + e.message;
+    $("err").style.display = "block";
+  }
+}
+
+// ---------- helpers dati
+const rowsNow = () => state.latest?.in_corso || [];
+const rowOf = (list, aat) => list.find(r => r.aat === aat);
+const sum = (list, k) => list.reduce((s,r) => s + (r[k] || 0), 0);
+function seriesFor(aat){
+  const {t, v, fields} = state.hist; const i = fields.indexOf("missioni");
+  const vals = t.map((_, j) => {
+    if(aat !== "REGIONE") return v[aat]?.[j]?.[i] ?? null;
+    let s = 0, any = false;
+    for(const a of state.hist.aats){ const x = v[a]?.[j]?.[i]; if(x != null){ s += x; any = true; } }
+    return any ? s : null;
+  });
+  return t.map((iso, j) => ({iso, ms: Date.parse(iso), v: vals[j]}));
+}
+
+// ---------- render
+function render(){
+  const L = state.latest, now = rowsNow(), snap = L.snapshot;
+  $("upd").textContent = `${hhmm(snap)} del ${new Date(snap).toLocaleDateString("it-IT",{day:"numeric",month:"long"})}`;
+
+  const tot = sum(now,"missioni"), b = baselineFor("REGIONE", snap);
+  $("k1").textContent = fmt(tot);
+  $("k1d").innerHTML = b ? devText(tot, b.med) + ` (di solito ~${fmt(b.med)})` : "il confronto col solito arriva dopo qualche giorno di raccolta";
+  const rossi = sum(now,"rosso");
+  $("k2").textContent = fmt(rossi);
+  $("k2d").textContent = tot ? `${Math.round(rossi/tot*100)}% delle missioni in corso` : "";
+  $("k3").textContent = fmt(sum(now,"elisoccorso"));
+  const eli = now.filter(r => r.elisoccorso > 0).map(r => NICE(r.aat));
+  $("k3d").textContent = eli.length ? "zone: " + eli.join(", ") : "nessuno in volo";
+  const oggi = sum(L.oggi,"missioni"), ieri = sum(L.ieri,"missioni");
+  $("k4").textContent = fmt(oggi);
+  $("k4d").textContent = ieri ? `ieri in tutto: ${fmt(ieri)}` : "";
+
+  renderTiles(); renderTrend(); renderCodes(); renderMotivi(); renderTable();
+}
+
+function devText(v, med){
+  if(med == null) return "";
+  const d = med > 0 ? (v - med) / med : 0, p = Math.round(d*100);
+  if(Math.abs(p) < 5) return `<span>in linea col solito</span>`;
+  return p > 0 ? `<span class="up">▲ +${p}%</span>` : `<span class="down">▼ ${p}%</span>`;
+}
+
+function devColor(v, med){
+  if(med == null || v == null) return {bg: css("--mid"), ink: ""};
+  // denominatore minimo 8: nelle zone piccole +3 missioni non deve sembrare un'emergenza
+  const d = (v - med) / Math.max(med, 8);
+  const steps = [[-.4,"--div-neg2"],[-.15,"--div-neg1"],[.15,"--mid"],[.4,"--div-pos1"],[Infinity,"--div-pos2"]];
+  const key = steps.find(([lim]) => d < lim)[1];
+  const bg = css(key);
+  return {bg, ink: inkFor(bg)};
+}
+function seqColor(v, max){
+  const ramp = ["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#256abf","#184f95"];
+  const i = Math.min(ramp.length-1, Math.floor(Math.sqrt(v / Math.max(max,1)) * ramp.length));
+  return {bg: ramp[i], ink: inkFor(ramp[i])};
+}
+function inkFor(hex){
+  const m = hex.match(/^#?([0-9a-f]{6})$/i); if(!m) return "";
+  const n = parseInt(m[1],16), r=(n>>16)/255, g=(n>>8&255)/255, b=(n&255)/255;
+  const lin = c => c <= .03928 ? c/12.92 : ((c+.055)/1.055)**2.4;
+  const Y = .2126*lin(r)+.7152*lin(g)+.0722*lin(b);
+  return Y > .35 ? "dark-ink" : "light-ink";
+}
+
+function renderTiles(){
+  const now = rowsNow(), snap = state.latest.snapshot, el = $("tiles");
+  const max = Math.max(...now.map(r => r.missioni || 0));
+  el.innerHTML = "";
+  for(const row of LAYOUT) for(const aat of row){
+    const d = document.createElement("div");
+    if(!aat){ d.className = "tile empty"; el.appendChild(d); continue; }
+    const r = rowOf(now, aat) || {}, v = r.missioni, b = baselineFor(aat, snap);
+    const c = state.tileMode === "dev" ? devColor(v, b?.med) : seqColor(v || 0, max);
+    d.className = `tile ${c.ink} ${state.sel === aat ? "sel" : ""}`;
+    d.style.background = c.bg;
+    d.tabIndex = 0; d.setAttribute("role","button");
+    d.setAttribute("aria-label", `${NICE(aat)}: ${fmt(v)} missioni in corso`);
+    const sub = state.tileMode === "dev"
+      ? (b ? `solito ${fmt(b.med)}` : "")
+      : `${fmt(r.rosso)} rossi`;
+    d.innerHTML = `<div class="n">${NICE(aat)}</div><div class="v">${fmt(v)}</div><div class="d">${sub}</div>`;
+    const pick = () => { state.sel = state.sel === aat ? "REGIONE" : aat; renderTiles(); renderTrend(); renderMotivi(); };
+    d.onclick = pick; d.onkeydown = e => { if(e.key==="Enter"||e.key===" "){ e.preventDefault(); pick(); } };
+    d.onmousemove = e => showTip(e, NICE(aat), [
+      ["In corso", fmt(v)], ["Di solito", b ? `${fmt(b.med)} (picchi ~${fmt(b.p90)})` : "–"],
+      ["Rossi / gialli / verdi", `${fmt(r.rosso)} / ${fmt(r.giallo)} / ${fmt(r.verde)}`],
+      ["Centrale", NICE(r.soreu) || "–"], ["Aggiornato", r.aggiornato_alle || "–"]]);
+    d.onmouseleave = hideTip;
+    el.appendChild(d);
+  }
+  const hasBase = (state.base?.giorni_di_storico || 0) >= 7;
+  $("tileLegend").innerHTML = state.tileMode === "dev"
+    ? `<span>Sotto il solito</span><span class="ramp">${["--div-neg2","--div-neg1","--mid","--div-pos1","--div-pos2"].map(k=>`<span style="background:var(${k})"></span>`).join("")}</span><span>Sopra il solito</span>`
+      + (hasBase ? "" : `<span>· storico ancora breve (${state.base?.giorni_di_storico||0} giorni): servono ~2 settimane per un confronto affidabile</span>`)
+    : `<span>Poche</span><span class="ramp">${["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#256abf","#184f95"].map(c=>`<span style="background:${c}"></span>`).join("")}</span><span>Molte missioni in corso</span>`;
+}
+
+function renderTrend(){
+  const sel = state.sel, wrap = $("trend");
+  $("trendTitle").textContent = `Missioni in corso · ${sel === "REGIONE" ? "Lombardia" : NICE(sel)}`;
+  const all = seriesFor(sel);
+  if(!all.length){ wrap.innerHTML = ""; return; }
+  const endMs = all[all.length-1].ms, startMs = endMs - state.hours*3600e3;
+  const pts = all.filter(p => p.ms >= startMs);
+  const band = pts.map(p => ({...p, b: baselineFor(sel, p.iso)}));
+  $("trendNote").textContent = pts.length < 6 ? "Pochi punti finora: la linea si allunga a ogni lettura (ogni ~10 minuti)." : "";
+
+  const W = wrap.clientWidth || 600, H = 240, m = {l:36, r:12, t:10, b:24};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const yMax = Math.max(5, ...pts.map(p => p.v || 0), ...band.map(p => p.b?.p90 || 0)) * 1.1;
+  const x = ms => m.l + (ms - startMs) / (endMs - startMs || 1) * iw;
+  const y = v => m.t + ih - v / yMax * ih;
+  const ticksY = niceTicks(yMax, 4);
+  const NS = "http://www.w3.org/2000/svg";
+  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Andamento delle missioni in corso">`;
+  for(const t of ticksY) s += `<line x1="${m.l}" x2="${W-m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${m.l-6}" y="${y(t)+4}" text-anchor="end">${t}</text>`;
+  // asse x
+  const stepH = state.hours <= 24 ? 4 : 24;
+  const first = new Date(startMs); first.setMinutes(0,0,0);
+  for(let ms = first.getTime(); ms <= endMs; ms += 3600e3){
+    const d = new Date(ms); if(ms < startMs) continue;
+    if(stepH === 24 ? d.getHours() !== 0 : d.getHours() % stepH !== 0) continue;
+    const lbl = stepH === 24 ? d.toLocaleDateString("it-IT",{weekday:"short",day:"numeric"}) : `${String(d.getHours()).padStart(2,"0")}:00`;
+    s += `<text x="${x(ms)}" y="${H-6}" text-anchor="middle">${lbl}</text>`;
+  }
+  // fascia del solito (mediana .. p90) + mediana tratteggiata
+  const segs = splitRuns(band, p => p.b);
+  for(const run of segs){
+    const top = run.map(p => `${x(p.ms)},${y(p.b.p90)}`).join(" ");
+    const bot = run.slice().reverse().map(p => `${x(p.ms)},${y(Math.min(p.b.med, p.b.p90))}`).join(" ");
+    s += `<polygon points="${top} ${bot}" fill="var(--band)"/>`;
+    s += `<polyline points="${run.map(p => `${x(p.ms)},${y(p.b.med)}`).join(" ")}" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+  }
+  // linea principale
+  for(const run of splitRuns(pts, p => p.v != null))
+    s += `<polyline points="${run.map(p => `${x(p.ms)},${y(p.v)}`).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const last = pts[pts.length-1];
+  if(last?.v != null) s += `<circle cx="${x(last.ms)}" cy="${y(last.v)}" r="4.5" fill="var(--accent)" stroke="var(--surface-1)" stroke-width="2"/>`;
+  s += `<line id="xh" y1="${m.t}" y2="${m.t+ih}" stroke="var(--text-muted)" stroke-width="1" visibility="hidden"/>`;
+  s += `<circle id="xd" r="5" fill="var(--accent)" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>`;
+  s += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg>`;
+  s += `<div class="legend"><span><i class="sw" style="background:var(--accent)"></i>In corso</span><span><i class="sw" style="background:var(--band)"></i>Il solito (mediana → picchi)</span></div>`;
+  wrap.innerHTML = s;
+
+  const svg = wrap.querySelector("svg"), xh = svg.querySelector("#xh"), xd = svg.querySelector("#xd");
+  svg.querySelector("#hit").addEventListener("mousemove", e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width;
+    const ms = startMs + (px - m.l) / iw * (endMs - startMs);
+    let best = band[0]; for(const p of band) if(Math.abs(p.ms - ms) < Math.abs(best.ms - ms)) best = p;
+    xh.setAttribute("x1", x(best.ms)); xh.setAttribute("x2", x(best.ms)); xh.setAttribute("visibility","visible");
+    if(best.v != null){ xd.setAttribute("cx", x(best.ms)); xd.setAttribute("cy", y(best.v)); xd.setAttribute("visibility","visible"); }
+    showTip(e, `${dayLabel(best.iso)} · ${hhmm(best.iso)}`, [["In corso", fmt(best.v)], ["Di solito", best.b ? fmt(best.b.med) : "–"], ["Picchi abituali", best.b ? fmt(best.b.p90) : "–"]]);
+  });
+  svg.querySelector("#hit").addEventListener("mouseleave", () => { xh.setAttribute("visibility","hidden"); xd.setAttribute("visibility","hidden"); hideTip(); });
+}
+function splitRuns(arr, ok){ const out=[]; let cur=[]; for(const p of arr){ if(ok(p)) cur.push(p); else if(cur.length){ out.push(cur); cur=[]; } } if(cur.length) out.push(cur); return out; }
+function niceTicks(max, n){ const raw = max / n, p = 10 ** Math.floor(Math.log10(raw)); const step = [1,2,5,10].map(k=>k*p).find(k => k >= raw); const t=[]; for(let v=0; v<=max; v+=step) t.push(v); return t; }
+
+function renderCodes(){
+  const rows = rowsNow().slice().sort((a,b) => (b.missioni||0) - (a.missioni||0));
+  const keys = [["rosso","Rosso","--c-rosso"],["giallo","Giallo","--c-giallo"],["verde","Verde","--c-verde"],["bianco","Bianco","--c-bianco"]];
+  const W = $("codes").clientWidth || 500, rowH = 22, gap = 6, lw = 78, rw = 36;
+  const H = rows.length * (rowH + gap);
+  const max = Math.max(1, ...rows.map(r => keys.reduce((s,[k]) => s + (r[k]||0), 0)));
+  const iw = W - lw - rw;
+  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Codici di gravità per zona">`;
+  rows.forEach((r, i) => {
+    const yy = i * (rowH + gap); let xx = lw;
+    const total = keys.reduce((a,[k]) => a + (r[k]||0), 0);
+    s += `<text x="0" y="${yy + rowH/2 + 4}" style="fill:var(--text-secondary)">${NICE(r.aat)}</text>`;
+    keys.forEach(([k], j) => {
+      const v = r[k] || 0; if(!v) return;
+      const w = Math.max(2, v / max * iw - 2);
+      s += `<rect x="${xx}" y="${yy}" width="${w}" height="${rowH}" rx="${j===0||xx===lw?3:1}" fill="var(${keys[j][2]})"/>`;
+      xx += w + 2;
+    });
+    s += `<text x="${xx + 4}" y="${yy + rowH/2 + 4}" style="fill:var(--text-primary)">${total}</text>`;
+    s += `<rect class="hit" data-i="${i}" x="0" y="${yy - gap/2}" width="${W}" height="${rowH + gap}" fill="transparent"/>`;
+  });
+  s += `</svg>`;
+  $("codes").innerHTML = s;
+  $("codes").querySelectorAll(".hit").forEach(h => {
+    const r = rows[+h.dataset.i];
+    h.addEventListener("mousemove", e => showTip(e, NICE(r.aat), keys.map(([k,l]) => [l, fmt(r[k])])));
+    h.addEventListener("mouseleave", hideTip);
+  });
+}
+
+function renderMotivi(){
+  const sel = state.sel, list = state.latest.oggi || [];
+  const src = sel === "REGIONE" ? list : list.filter(r => r.aat === sel);
+  $("motTitle").textContent = `Motivi di intervento oggi · ${sel === "REGIONE" ? "Lombardia" : NICE(sel)}`;
+  const data = MOTIVI.map(([k,l]) => [l, sum(src,k)]).filter(d => d[1] > 0).sort((a,b) => b[1]-a[1]);
+  const W = $("motivi").clientWidth || 500, rowH = 20, gap = 6, lw = 140, rw = 44, iw = W - lw - rw;
+  const H = Math.max(rowH, data.length * (rowH + gap));
+  const max = Math.max(1, ...data.map(d => d[1])), totale = data.reduce((s,d)=>s+d[1],0);
+  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Motivi di intervento">`;
+  data.forEach(([l,v], i) => {
+    const yy = i * (rowH + gap), w = Math.max(2, v / max * iw);
+    s += `<text x="0" y="${yy + rowH/2 + 4}" style="fill:var(--text-secondary)">${l}</text>`;
+    s += `<rect x="${lw}" y="${yy}" width="${w}" height="${rowH}" rx="3" fill="var(--accent)"/>`;
+    s += `<text x="${lw + w + 6}" y="${yy + rowH/2 + 4}" style="fill:var(--text-primary)">${fmt(v)}</text>`;
+    s += `<rect class="hit" data-i="${i}" x="0" y="${yy - gap/2}" width="${W}" height="${rowH+gap}" fill="transparent"/>`;
+  });
+  s += `</svg>`;
+  $("motivi").innerHTML = data.length ? s : `<p class="note">Nessun dato.</p>`;
+  $("motivi").querySelectorAll(".hit").forEach(h => {
+    const [l,v] = data[+h.dataset.i];
+    h.addEventListener("mousemove", e => showTip(e, l, [["Missioni", fmt(v)], ["Quota", `${Math.round(v/totale*100)}%`]]));
+    h.addEventListener("mouseleave", hideTip);
+  });
+}
+
+function renderTable(){
+  const cols = [["aat","Zona"],["soreu","Centrale"],["missioni","In corso"],["rosso","Rossi"],["giallo","Gialli"],["verde","Verdi"],["msb","MSB"],["msa","MSA"],["elisoccorso","Elisocc."],["aggiornato_alle","Aggiornato"]];
+  const rows = rowsNow();
+  $("table").innerHTML = `<table><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join("")}</tr></thead><tbody>${
+    rows.map(r => `<tr>${cols.map(([k]) => `<td>${typeof r[k] === "number" ? fmt(r[k]) : NICE(r[k]) || (k==="aggiornato_alle"?r[k]:"–")}</td>`).join("")}</tr>`).join("")
+  }</tbody></table>`;
+}
+
+// ---------- tooltip
+function showTip(e, title, rows){
+  tip.innerHTML = `<div class="t">${title}</div>` + rows.map(([a,b]) => `<div class="row"><span>${a}</span><b>${b}</b></div>`).join("");
+  tip.style.display = "block";
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let lx = e.clientX + pad, ly = e.clientY + pad;
+  if(lx + w > innerWidth - 8) lx = e.clientX - w - pad;
+  if(ly + h > innerHeight - 8) ly = e.clientY - h - pad;
+  tip.style.left = lx + "px"; tip.style.top = ly + "px";
+}
+function hideTip(){ tip.style.display = "none"; }
+
+// ---------- controlli
+function seg(id, key, cb){
+  $(id).querySelectorAll("button").forEach(b => b.onclick = () => {
+    $(id).querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+    state[key] = key === "hours" ? +b.dataset.v : b.dataset.v; cb();
+  });
+}
+seg("range", "hours", renderTrend);
+seg("tileMode", "tileMode", renderTiles);
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => state.latest && render(), 150); });
+
+let left = REFRESH_S;
+setInterval(() => { left--; if(left <= 0){ left = REFRESH_S; load(); } $("cd").textContent = `${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`; }, 1000);
+load();
+})();
+</script>
+</body>
+</html>
