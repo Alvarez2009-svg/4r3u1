@@ -512,9 +512,18 @@ def build(now: datetime, finals: dict) -> dict:
             if a != "LOMBARDIA" and t1 > f_since:
                 dm = C.delta(a, t0, t1, "missioni")
                 dr = C.delta(a, t0, t1, "rosso")
-                if (i1.get("elisoccorso") or 0) > (i0.get("elisoccorso") or 0) and i0:
+                # tipi di mezzo partiti tra le due letture
+                tipi = []
+                for k, sigla in (("msb", "MSB"), ("msa", "MSA"), ("msi", "MSI"), ("elisoccorso", "elisoccorso"),
+                                 ("mezzi_altro", "altro mezzo")):
+                    d = C.delta(a, t0, t1, k)
+                    if d:
+                        tipi.append((d, sigla))
+                d_eli = C.delta(a, t0, t1, "elisoccorso") or 0
+                if d_eli or ((i1.get("elisoccorso") or 0) > (i0.get("elisoccorso") or 0) and i0):
                     tags.append("eli")
-                    parts.append("elisoccorso in volo")
+                    if not d_eli:
+                        parts.append("elisoccorso in volo")
                 motivi_txt = []
                 for k, (sg, pl) in NOTABILI.items():
                     d = C.delta(a, t0, t1, k)
@@ -530,8 +539,15 @@ def build(now: datetime, finals: dict) -> dict:
                 if dr and (raffica or tags):
                     tags.insert(0, "rosso")
                 head = []
-                if dm:
-                    head.append(f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}")
+                elenco = ", ".join(f"{d} {sg}" for d, sg in tipi)
+                if dm and len(tipi) == 1 and tipi[0][0] == dm:
+                    sg = tipi[0][1].replace("altro mezzo", "altri mezzi" if dm > 1 else "altro mezzo")
+                    head.append(f"{dm} {sg} {'inviato' if dm == 1 else 'inviati'}")
+                elif dm:
+                    head.append(f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}"
+                                + (f" ({elenco})" if tipi else ""))
+                elif tipi:
+                    head.append(elenco + " inviati")
                 if dr:
                     head.append(f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
                 parts = head + parts + motivi_txt
