@@ -1,0 +1,43 @@
+name: Raccolta dati AREU 118
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scarica i dati
+        run: python scraper/scrape.py
+
+      - name: Salva nel repository
+        run: |
+          git config user.name  "areu-bot"
+          git config user.email "areu-bot@users.noreply.github.com"
+          git add data docs/data
+          if git diff --cached --quiet; then
+            echo "Nessun cambiamento"
+            exit 0
+          fi
+          git commit -m "dati $(TZ=Europe/Rome date '+%Y-%m-%d %H:%M')"
+          for i in 1 2 3; do
+            git push && exit 0
+            git pull --rebase -X theirs && sleep 3
+          done
+          exit 1
