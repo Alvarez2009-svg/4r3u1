@@ -288,7 +288,8 @@ footer a{color:var(--text-2)}
     Fonte: <a href="https://www.areu.lombardia.it/web/home/missioni-aat-real-time" target="_blank" rel="noopener">AREU Lombardia – Missioni 118 in tempo reale</a>. Progetto personale, non ufficiale.
     I dati sono letti ogni ~10 minuti. "Il solito" è la mediana delle ultime 8 settimane per giorno della settimana e ora.
     La durata delle missioni è una stima statistica (legge di Little), non un dato AREU.
-    MSB = mezzo di soccorso di base (ambulanza con soccorritori) · MSA = mezzo di soccorso avanzato con medico · MSI = mezzo con infermiere.
+    MSB = mezzo di soccorso di base (soccorritori) · MSA1 = mezzo avanzato con infermiere · MSA2 = mezzo avanzato con infermiere e medico (definizioni AREU).
+    Nel registro, "rientrati" compare solo quando i contatori della zona sono allineati; "intervento complesso" e "tendenza regionale" sono stime statistiche.
   </footer>
 </main>
 
@@ -310,8 +311,8 @@ const MOTIVI = [["medico_acuto","Malore / problema medico"],["caduta","Caduta"],
   ["incidente_speleo","Speleo / forra"],["non_noto","Non noto"],["altri_motivi","Altro"],["motivo_altro","Altro (2)"]];
 const MOT_LABEL = Object.fromEntries(MOTIVI);
 const CODES = [["rosso","Rosso","--rosso"],["giallo","Giallo","--giallo"],["verde","Verde","--verde"],["bianco","Bianco","--bianco"]];
-const VEH = [["msb","MSB","Ambulanze di base","--blue"],["msa","MSA","Mezzi con medico","--aqua"],
-             ["msi","MSI","Mezzi con infermiere","--violet"],["elisoccorso","ELI","Elisoccorsi","--orange"]];
+const VEH = [["msb","MSB","Ambulanze di base","--blue"],["msi","MSA1","Con infermiere","--violet"],
+             ["msa","MSA2","Con medico","--aqua"],["elisoccorso","ELI","Elisoccorsi","--orange"]];
 const ICON = {
   msb:'<svg width="18" height="14" viewBox="0 0 24 18"><path fill="currentColor" d="M1 3h14v11H1zM15 6h4.5l3.5 4v4h-8z"/><circle cx="6" cy="15" r="2.3" fill="#151d26" stroke="currentColor" stroke-width="1.6"/><circle cx="18" cy="15" r="2.3" fill="#151d26" stroke="currentColor" stroke-width="1.6"/><path d="M8 5.5v6M5 8.5h6" stroke="#151d26" stroke-width="2"/></svg>',
   msa:'<svg width="18" height="14" viewBox="0 0 24 18"><path fill="currentColor" d="M2 10l3-6h11l4 6h2v4H2z"/><circle cx="7" cy="14.5" r="2.3" fill="#151d26" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="14.5" r="2.3" fill="#151d26" stroke="currentColor" stroke-width="1.6"/><rect x="9" y="1" width="5" height="2" rx="1" fill="currentColor"/></svg>',
@@ -325,6 +326,7 @@ const TAGS = { // registro eventi: colore e rilevanza
   calamita_naturale:["Calamità","--rosso",3], rosso:["Codici rossi","--rosso",2], incidente_stradale:["Strada","--giallo",1],
   evento_violento:["Violenza","--violet",1], intossicazione:["Intossicazione","--violet",1], animali:["Animali","--muted",1],
   routine:["","--line",0],
+  complesso:["Intervento complesso","--orange",3], regionale:["Tendenza regionale","--rosso",3], traguardo:["Traguardo","--blue",2],
 };
 
 // ======================================================== stato e utilità
@@ -634,7 +636,7 @@ function renderFeed(){
     const dd = e.t.slice(0,10); let sep = "";
     if(dd !== lastDay){ sep = lastDay ? `<div class="fi" style="grid-template-columns:1fr;padding:6px 0"><span class="zz" style="color:var(--muted)">${dayShort(e.t)}</span></div>` : ""; lastDay = dd; }
     return sep + `<div class="fi"><span class="tm">${hhmm(e.t)}</span><span class="mk" style="background:var(${col})${top === "rientro" ? ";background:transparent;border:2px solid var(--blue)" : ""}"></span>
-      <div><div class="zz">${NICE(e.aat)}${e.tag.map(t => TAGS[t] && TAGS[t][2] >= 2 ? ` · <span style="color:var(${TAGS[t][1]})">${TAGS[t][0]}</span>` : "").join("")}</div><div class="tx">${esc(e.testo)}</div></div></div>`;
+      <div><div class="zz">${e.aat === "LOMBARDIA" ? "Lombardia · tutta la regione" : NICE(e.aat)}${e.tag.map(t => TAGS[t] && TAGS[t][2] >= 2 ? ` · <span style="color:var(${TAGS[t][1]})">${TAGS[t][0]}</span>` : "").join("")}</div><div class="tx">${esc(e.testo)}</div></div></div>`;
   }).join("");
 }
 document.querySelectorAll("#feedMode button").forEach(b => b.onclick = () => {
@@ -819,8 +821,8 @@ function renderTable(){
     ["dev","Δ", z => { const p = z.solito_adesso ? pct(z.adesso?.missioni, z.solito_adesso.med) : null; return p == null ? "–" : `<span class="pill ${devClass(p)}">${p >= 0 ? "+" : ""}${Math.round(p)}%</span>`; }, z => z.solito_adesso ? pct(z.adesso?.missioni, z.solito_adesso.med) : -999],
     ["rosso","Rossi", z => fmt(z.adesso?.rosso), z => z.adesso?.rosso ?? -1],
     ["msb","MSB", z => fmt(z.adesso?.msb), z => z.adesso?.msb ?? -1],
-    ["msa","MSA", z => fmt(z.adesso?.msa), z => z.adesso?.msa ?? -1],
-    ["msi","MSI", z => fmt(z.adesso?.msi), z => z.adesso?.msi ?? -1],
+    ["msi","MSA1", z => fmt(z.adesso?.msi), z => z.adesso?.msi ?? -1],
+    ["msa","MSA2", z => fmt(z.adesso?.msa), z => z.adesso?.msa ?? -1],
     ["eli","ELI", z => z.adesso?.elisoccorso ? `<b style="color:var(--orange)">${z.adesso.elisoccorso}</b>` : "0", z => z.adesso?.elisoccorso ?? -1],
     ["r1","Invii/ora", z => fmt(z.ritmo?.arrivi_1h), z => z.ritmo?.arrivi_1h ?? -1],
     ["dur","Durata", z => z.ritmo?.durata_min ? `~${z.ritmo.durata_min}′` : "–", z => z.ritmo?.durata_min ?? -1],

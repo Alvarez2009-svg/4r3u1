@@ -306,6 +306,16 @@ class Calc:
         return out
 
 
+def poisson_coda(k: int, lam: float) -> float:
+    """P(X >= k) per X ~ Poisson(lam)."""
+    import math
+    term, cdf = math.exp(-lam), 0.0
+    for i in range(k):
+        cdf += term
+        term *= lam / (i + 1)
+    return max(0.0, 1.0 - cdf)
+
+
 def region_sum(dicts: list[dict | None], keys: list[str]):
     dicts = [d for d in dicts if d]
     if not dicts:
@@ -484,10 +494,33 @@ def build(now: datetime, finals: dict) -> dict:
         back = v <= b["med"] * 1.1
         return ("su" if above else "giu" if back else "mezzo"), b
 
+    # --- dati per i traguardi: totali completi dei giorni passati (giornaliero.csv)
+    past_days = sorted({d for (d, _a) in finals if d < today.isoformat()}, reverse=True)[:28]
+    def day_total(d, a=None):
+        if a:
+            return (finals.get((d, a)) or {}).get("missioni")
+        vals = [(finals.get((d, z)) or {}).get("missioni") for z in C.aats]
+        return sum(vals) if vals and all(v is not None for v in vals) else None
+    ieri_tot_reg = day_total(yest.isoformat())
+    def cum_reg(t, k="missioni"):
+        snap = ogg.get(t, {})
+        vals = [d.get(k) for d in snap.values() if d.get("day") == today.isoformat()]
+        return sum(v for v in vals if v is not None) if len(vals) == len(C.aats) else None
+    prev_peak = [sum((d.get("missioni") or 0) for d in inc[t].values())
+                 for t in inc if today - timedelta(days=7) <= t.date() < today]
+    prev_peak_max = max(prev_peak) if prev_peak and len({t.date() for t in inc if t.date() < today}) >= 3 else None
+    peak_done = False
+    trend_last: dict[str, datetime] = {}
+    TREND = {"incidente_stradale": "incidenti stradali", "caduta": "cadute",
+             "intossicazione": "intossicazioni", "evento_violento": "eventi violenti"}
+
+    def add(t, a, tags, parts):
+        if parts and t > f_since:
+            feed.append({"t": t.isoformat(timespec="minutes"), "aat": a, "tag": tags, "testo": " · ".join(parts)})
+
     for t0, t1 in zip(tsf, tsf[1:]):
         if (t1 - t0).total_seconds() / 60 > GAP_MIN:
             continue
-        reg_v = 0
         for a in C.aats + ["LOMBARDIA"]:
             if a == "LOMBARDIA":
                 v = sum((d.get("missioni") or 0) for d in inc.get(t1, {}).values()) if t1 in inc else None
@@ -501,20 +534,20 @@ def build(now: datetime, finals: dict) -> dict:
             prev = surge_on.get(a, False)
             if st == "su" and not prev:
                 surge_on[a] = True
-                if t1 > f_since:
-                    tags.append("picco")
-                    parts.append(f"mezzi in uscita sopra il solito: {v} (di solito {b['med']:g})")
+                tags.append("picco")
+                parts.append(f"mezzi in uscita sopra il solito: {v} (di solito {b['med']:g})")
             elif st == "giu" and prev:
                 surge_on[a] = False
-                if t1 > f_since:
-                    tags.append("rientro")
-                    parts.append(f"situazione rientrata: {v} mezzi in uscita (di solito {b['med']:g})")
+                tags.append("rientro")
+                parts.append(f"situazione rientrata: {v} mezzi in uscita (di solito {b['med']:g})")
             if a != "LOMBARDIA" and t1 > f_since:
+                o0, o1 = ogg.get(t0, {}).get(a) or {}, ogg.get(t1, {}).get(a) or {}
                 dm = C.delta(a, t0, t1, "missioni")
                 dr = C.delta(a, t0, t1, "rosso")
-                # tipi di mezzo partiti tra le due letture
+                de = C.delta(a, t0, t1, "totale_missioni")
+                # tipi di mezzo partiti tra le due letture (nomi ufficiali AREU)
                 tipi = []
-                for k, sigla in (("msb", "MSB"), ("msa", "MSA"), ("msi", "MSI"), ("elisoccorso", "elisoccorso"),
+                for k, sigla in (("msb", "MSB"), ("msi", "MSA1"), ("msa", "MSA2"), ("elisoccorso", "elisoccorso"),
                                  ("mezzi_altro", "altro mezzo")):
                     d = C.delta(a, t0, t1, k)
                     if d:
@@ -534,10 +567,13 @@ def build(now: datetime, finals: dict) -> dict:
                     d = C.delta(a, t0, t1, k)
                     if d:
                         motivi_txt.append(f"{d} {sg if d == 1 else pl}")
-                # i codici rossi sono frequenti: diventano "rilevanti" solo se arrivano a raffica
                 raffica = dr is not None and dm and dr >= 3 and dr / dm >= 0.5
                 if dr and (raffica or tags):
                     tags.insert(0, "rosso")
+                # intervento complesso: molti piu' mezzi che eventi nuovi, con mezzi avanzati
+                avanz = sum(C.delta(a, t0, t1, k) or 0 for k in ("msa", "msi", "elisoccorso"))
+                extra = (dm or 0) - (de or 0) if de is not None else None
+                complesso = extra is not None and extra >= 3 and extra >= 0.5 * max(de, 1) and avanz >= 2
                 head = []
                 elenco = ", ".join(f"{d} {sg}" for d, sg in tipi)
                 if dm and len(tipi) == 1 and tipi[0][0] == dm:
@@ -550,12 +586,82 @@ def build(now: datetime, finals: dict) -> dict:
                     head.append(elenco + " inviati")
                 if dr:
                     head.append(f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
+                # rientri = partenze - variazione dei mezzi in corso; solo se i due contatori
+                # della zona sono allineati (stesso orario di aggiornamento) e il conto torna
+                if (dm is not None and i0 and i1 and o0 and o1 and o0.get("day") == o1.get("day")
+                        and i0.get("agg") == o0.get("agg") and i1.get("agg") == o1.get("agg")
+                        and i0.get("missioni") is not None and i1.get("missioni") is not None):
+                    rient = dm - (i1["missioni"] - i0["missioni"])
+                    if rient > 0:
+                        head.append(f"{rient} {'mezzo rientrato' if rient == 1 else 'mezzi rientrati'}")
                 parts = head + parts + motivi_txt
+                if complesso:
+                    tags.insert(0, "complesso")
+                    parts.append(f"probabile intervento complesso o rinforzi: {dm} mezzi per {de} "
+                                 f"{'nuovo evento' if de == 1 else 'nuovi eventi'}, {avanz} "
+                                 f"{'mezzo avanzato' if avanz == 1 else 'mezzi avanzati'}")
                 if parts and not tags:
-                    tags.append("routine")      # uscite ordinarie: visibili con il filtro "Tutti"
-            if parts and t1 > f_since:
-                feed.append({"t": t1.isoformat(timespec="minutes"), "aat": a,
-                             "tag": tags, "testo": " · ".join(parts)})
+                    tags.append("routine")
+            add(t1, a, tags, parts)
+
+        # --- tendenze regionali: lo stesso motivo in piu' zone nella stessa mezz'ora
+        tw = C.near(t1 - timedelta(minutes=30), 8)
+        midnight = datetime(t1.year, t1.month, t1.day, tzinfo=TZ)
+        mins_today = (t1 - midnight).total_seconds() / 60
+        if tw and tw < t1 and mins_today >= 120 and t1 > f_since:
+            win = (t1 - tw).total_seconds() / 60
+            for k, nome in TREND.items():
+                if k in trend_last and t1 - trend_last[k] < timedelta(minutes=60):
+                    continue
+                per = {a: C.delta(a, tw, t1, k) for a in C.aats}
+                per = {a: d for a, d in per.items() if d}
+                tot = sum(per.values())
+                cr, ce = cum_reg(t1, k), cum_reg(t1, "totale_missioni")
+                dev = [C.delta(z, tw, t1, "totale_missioni") for z in C.aats]
+                if cr is None or not ce or any(d is None for d in dev):
+                    continue
+                # atteso = quota di quel motivo negli eventi di oggi x eventi della mezz'ora
+                # (cosi' il normale ciclo giorno/notte non genera falsi allarmi)
+                atteso = cr / ce * sum(dev)
+                # probabilita' di vedere almeno 'tot' casi per puro caso (Poisson): deve essere < 1/1000
+                if len(per) >= 3 and tot >= 5 and poisson_coda(tot, max(atteso, 0.2)) < 0.001:
+                    trend_last[k] = t1
+                    zone_txt = ", ".join(z.capitalize() for z in sorted(per, key=lambda z: -per[z]))
+                    add(t1, "LOMBARDIA", ["regionale"],
+                        [f"Tendenza regionale: {tot} {nome} in {round(win)} minuti in {len(per)} zone ({zone_txt})",
+                         f"di solito oggi sarebbero stati circa {atteso:.0f}"])
+
+        # --- traguardi (pochi e solo rilevanti)
+        if t1 > f_since and t0.date() == t1.date() == today:
+            r0, r1 = cum_reg(t0), cum_reg(t1)
+            if r0 is not None and r1 is not None:
+                if ieri_tot_reg and r0 <= ieri_tot_reg < r1 and t1.hour < 23:
+                    add(t1, "LOMBARDIA", ["traguardo"],
+                        [f"Superate le {ieri_tot_reg:,} missioni di tutta la giornata di ieri".replace(",", "."),
+                         f"oggi sono già {r1:,}".replace(",", ".")])
+                if len(past_days) >= 7:
+                    mx = max((day_total(d) or 0) for d in past_days)
+                    if mx and r0 <= mx < r1:
+                        add(t1, "LOMBARDIA", ["traguardo"],
+                            [f"Giornata più intensa degli ultimi {len(past_days)} giorni: superate le {mx:,} missioni".replace(",", ".")])
+            if len(past_days) >= 7:
+                for a in C.aats:
+                    c0, c1 = (ogg.get(t0, {}).get(a) or {}), (ogg.get(t1, {}).get(a) or {})
+                    if c0.get("day") != today.isoformat() or c1.get("day") != today.isoformat():
+                        continue
+                    mx = max((day_total(d, a) or 0) for d in past_days)
+                    if mx >= 20 and c0.get("missioni") is not None and c1.get("missioni") is not None \
+                            and c0["missioni"] <= mx < c1["missioni"]:
+                        add(t1, a, ["traguardo"],
+                            [f"Giornata più intensa degli ultimi {len(past_days)} giorni: superate le {mx} missioni"])
+            if prev_peak_max and not peak_done and t1 in inc:
+                vnow = sum((d.get("missioni") or 0) for d in inc[t1].values())
+                vprev = sum((d.get("missioni") or 0) for d in inc.get(t0, {}).values()) if t0 in inc else 0
+                if vprev <= prev_peak_max < vnow:
+                    peak_done = True
+                    add(t1, "LOMBARDIA", ["traguardo"],
+                        [f"Mai così tanti mezzi fuori contemporaneamente negli ultimi 7 giorni: {vnow} "
+                         f"(il massimo precedente era {prev_peak_max})"])
     feed.reverse()
     out["feed.json"] = {"eventi": feed[:FEED_MAX]}
     return out
