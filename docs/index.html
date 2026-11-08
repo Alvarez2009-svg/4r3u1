@@ -241,7 +241,7 @@ footer a{color:var(--text-2)}
     <section class="panel c5">
       <div class="ph"><span class="when">Ultime 24 ore</span><h3>Registro eventi</h3>
         <div class="seg" id="feedMode"><button data-v="top" aria-pressed="true">Rilevanti</button><button data-v="all" aria-pressed="false">Tutti</button></div>
-        <span class="help">Ricavato confrontando una lettura con la precedente (ogni ~10 minuti).</span></div>
+        <span class="help">Ricavato confrontando una lettura con la precedente (ogni ~10 minuti). "Rilevanti" mostra solo gli eventi notevoli, "Tutti" ogni nuova uscita.</span></div>
       <div class="feed" id="feed"></div>
     </section>
 
@@ -324,6 +324,7 @@ const TAGS = { // registro eventi: colore e rilevanza
   incidente_acqua:["Acqua","--aqua",3], incidente_speleo:["Speleo","--orange",3], evento_massa:["Evento di massa","--rosso",3],
   calamita_naturale:["Calamità","--rosso",3], rosso:["Codici rossi","--rosso",2], incidente_stradale:["Strada","--giallo",1],
   evento_violento:["Violenza","--violet",1], intossicazione:["Intossicazione","--violet",1], animali:["Animali","--muted",1],
+  routine:["","--line",0],
 };
 
 // ======================================================== stato e utilità
@@ -613,9 +614,19 @@ function renderTiles(){
 
 // ======================================================== registro eventi
 function renderFeed(){
-  const ev = (S.feed?.eventi || []).filter(e => S.focus === "LOMBARDIA" || e.aat === S.focus || (e.aat === "LOMBARDIA" && false));
+  const all = S.feed?.eventi || [];
+  const ev = all.filter(e => S.focus === "LOMBARDIA" || e.aat === S.focus);
   const list = S.feedMode === "top" ? ev.filter(e => e.tag.some(t => (TAGS[t]?.[2] || 0) >= 2)) : ev;
-  if(!list.length){ $("feed").innerHTML = `<div class="empty-note">${ev.length ? "Nessun evento rilevante nelle ultime 24 ore. Prova \"Tutti\"." : "Il registro si riempie confrontando le letture: servono almeno due raccolte."}</div>`; return; }
+  const dove = S.focus === "LOMBARDIA" ? "in Lombardia" : `a ${NICE(S.focus)}`;
+  if(!list.length){
+    let msg;
+    if(!all.length) msg = "Il registro si riempie confrontando due letture consecutive (a meno di 40 minuti l'una dall'altra).";
+    else if(S.feedMode === "top" && ev.length) msg = `Nessun evento rilevante ${dove} nelle ultime 24 ore (picchi, elisoccorso, montagna, acqua, raffiche di codici rossi). <a href="#" id="feedAll" style="color:var(--text)">Mostra tutte le uscite</a>.`;
+    else msg = `Nessuna nuova uscita registrata ${dove} tra le letture delle ultime 24 ore.`;
+    $("feed").innerHTML = `<div class="empty-note">${msg}</div>`;
+    const a = $("feedAll"); if(a) a.onclick = ev2 => { ev2.preventDefault(); document.querySelector('#feedMode button[data-v="all"]').click(); };
+    return;
+  }
   let lastDay = "";
   $("feed").innerHTML = list.slice(0, 120).map(e => {
     const top = e.tag.slice().sort((a,b) => (TAGS[b]?.[2]||0) - (TAGS[a]?.[2]||0))[0];

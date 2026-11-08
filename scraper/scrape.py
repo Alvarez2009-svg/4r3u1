@@ -62,6 +62,16 @@ ADESSO_KEYS = ["missioni", "totale_missioni", "rosso", "giallo", "verde", "bianc
                "msb", "msa", "msi", "elisoccorso", "mezzi_altro"] + MOTIVI
 OGGI_KEYS = ADESSO_KEYS + ["soccorso_alpino"]
 
+# motivi ordinari: compaiono nel testo del registro ma non lo rendono "rilevante"
+ORDINARI = {
+    "medico_acuto": ("malore / problema medico", "malori / problemi medici"),
+    "caduta": ("caduta", "cadute"),
+    "infortunio": ("infortunio", "infortuni"),
+    "soccorso_persona": ("soccorso a persona", "soccorsi a persona"),
+    "non_noto": ("motivo non noto", "motivi non noti"),
+    "motivo_altro": ("altro motivo", "altri motivi"),
+    "altri_motivi": ("altro motivo", "altri motivi"),
+}
 # eventi che vale la pena segnalare nel feed: (singolare, plurale)
 NOTABILI = {
     "incidente_stradale": ("incidente stradale", "incidenti stradali"),
@@ -80,7 +90,7 @@ BASELINE_DAYS = 56
 SERIES_DAYS = 7
 HEATMAP_DAYS = 8
 FEED_HOURS = 24
-FEED_MAX = 150
+FEED_MAX = 900
 GAP_MIN = 40          # oltre questo buco tra letture un'ora non e' calcolabile
 
 
@@ -279,7 +289,7 @@ class Calc:
             boundary = start + timedelta(hours=h + 1)
             if boundary > self.now:
                 boundary = self.now
-            i = bisect.bisect_left(times, boundary) - 1
+            i = bisect.bisect_right(times, boundary) - 1   # include la lettura esattamente al confine (es. adesso)
             if i < 0:
                 return None
             if (boundary - times[i]).total_seconds() / 60 > GAP_MIN:
@@ -505,18 +515,28 @@ def build(now: datetime, finals: dict) -> dict:
                 if (i1.get("elisoccorso") or 0) > (i0.get("elisoccorso") or 0) and i0:
                     tags.append("eli")
                     parts.append("elisoccorso in volo")
+                motivi_txt = []
                 for k, (sg, pl) in NOTABILI.items():
                     d = C.delta(a, t0, t1, k)
                     if d:
                         tags.append(k)
-                        parts.append(f"{d} {sg if d == 1 else pl}")
-                # i codici rossi sono frequenti: da soli fanno notizia solo se arrivano a raffica
+                        motivi_txt.append(f"{d} {sg if d == 1 else pl}")
+                for k, (sg, pl) in ORDINARI.items():
+                    d = C.delta(a, t0, t1, k)
+                    if d:
+                        motivi_txt.append(f"{d} {sg if d == 1 else pl}")
+                # i codici rossi sono frequenti: diventano "rilevanti" solo se arrivano a raffica
                 raffica = dr is not None and dm and dr >= 3 and dr / dm >= 0.5
-                if dr and (parts or raffica):
+                if dr and (raffica or tags):
                     tags.insert(0, "rosso")
-                    parts.insert(0, f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
-                if parts and dm:
-                    parts.insert(0, f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}")
+                head = []
+                if dm:
+                    head.append(f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}")
+                if dr:
+                    head.append(f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
+                parts = head + parts + motivi_txt
+                if parts and not tags:
+                    tags.append("routine")      # uscite ordinarie: visibili con il filtro "Tutti"
             if parts and t1 > f_since:
                 feed.append({"t": t1.isoformat(timespec="minutes"), "aat": a,
                              "tag": tags, "testo": " · ".join(parts)})
