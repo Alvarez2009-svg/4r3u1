@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """
-Scraper per i dati 118 in tempo reale di AREU Lombardia.
+AREU 118 Lombardia - raccolta dati e calcolo degli indicatori per la dashboard.
 
-Legge l'API pubblica usata dalla pagina
-https://www.areu.lombardia.it/web/home/missioni-aat-real-time
-e salva:
-  data/in_corso/AAAA-MM.csv     una riga per zona (AAT) a ogni esecuzione  -> lo storico
-  data/giornaliero.csv          totali di ogni giorno per zona (l'ultimo valore visto vince)
-  docs/data/latest.json         ultima fotografia, per la dashboard
-  docs/data/history.json        ultimi 7 giorni delle missioni in corso, per i grafici
-  docs/data/baseline.json       "il solito": mediana per zona / giorno della settimana / ora
+Ogni esecuzione:
+  1. legge l'API pubblica usata da https://www.areu.lombardia.it/web/home/missioni-aat-real-time
+  2. aggiunge allo storico (data/, versionato nel repository):
+       data/in_corso/AAAA-MM.csv   mezzi in missione in quel momento, una riga per zona
+       data/oggi/AAAA-MM.csv       totali progressivi della giornata, una riga per zona
+       data/giornaliero.csv        totale finale di ogni giorno per zona
+  3. calcola gli indicatori e scrive i JSON letti dalla dashboard (--out, default docs/data):
+       latest.json    situazione attuale per zona e regione (adesso, ultima ora, oggi, ieri)
+       series.json    ultimi 7 giorni dei mezzi in missione
+       arrivi.json    nuove missioni per ora, ultimi 8 giorni (heatmap e confronto con ieri)
+       feed.json      eventi notevoli delle ultime 24 ore, ricavati confrontando le letture
+       baseline.json  "il solito" (mediana delle ultime 8 settimane per giorno della settimana e ora)
 
-Solo libreria standard: nessun pip install necessario.
-Uso:
-  python scraper/scrape.py                      # scarica dall'API
-  python scraper/scrape.py --from-file x.json   # usa un file (test)
+Significato dei campi dell'API (verificato sui dati):
+  missioni        = mezzi inviati (= msb + msa + msi + elisoccorso + mezzi_altro = somma dei codici colore)
+  totale_missioni = eventi (= somma dei motivi); un evento grave puo' richiedere piu' mezzi
+Solo libreria standard Python.
 """
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import glob
 import json
@@ -28,47 +33,60 @@ import sys
 import time
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-API_URL = (
-    "https://www.areu.lombardia.it/api/jsonws/"
-    "eventiregionejson.eventiregionejson/statistiche-regione"
-)
-USER_AGENT = "areu-118-dashboard (progetto hobby; dati pubblici AREU)"
+API_URL = ("https://www.areu.lombardia.it/api/jsonws/"
+           "eventiregionejson.eventiregionejson/statistiche-regione")
+USER_AGENT = "areu-118-dashboard (progetto personale; dati pubblici AREU)"
 TZ = ZoneInfo("Europe/Rome")
-
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data")
-SITE_DATA_DIR = os.path.join(ROOT, "docs", "data")
 
 TEXT_FIELDS = ["aat", "soreu", "aggiornato_alle", "day_data"]
+MOTIVI = ["medico_acuto", "caduta", "evento_violento", "incidente_stradale", "incidente_acqua",
+          "incidente_montano", "incidente_speleo", "infortunio", "intossicazione", "animali",
+          "calamita_naturale", "evento_massa", "soccorso_persona", "non_noto", "motivo_altro",
+          "altri_motivi"]
 NUM_FIELDS = [
-    # contatori principali
     "missioni", "totale_missioni", "soccorsi", "totale_traffico_tel",
-    # codici di gravita
     "rosso", "giallo", "verde", "bianco",
-    # mezzi
     "msb", "msa", "msi", "elisoccorso", "mezzi_altro",
-    # tipo di chiamata
     "soccorso_primario", "soccorso_secondario", "informazioni", "consulenza",
     "trasporto_organi", "trasporto_prenotato", "prestazione_ambulatoriale",
-    "guardia_medica", "da_richiamare", "altro",
-    # motivi
-    "medico_acuto", "caduta", "evento_violento", "incidente_stradale",
-    "incidente_acqua", "incidente_montano", "incidente_speleo", "infortunio",
-    "intossicazione", "animali", "calamita_naturale", "evento_massa",
-    "soccorso_persona", "soccorso_acqua", "soccorso_alpino", "non_noto",
-    "motivo_altro", "altri_motivi",
-]
+    "guardia_medica", "da_richiamare", "altro", "soccorso_alpino", "soccorso_acqua",
+] + MOTIVI
 CSV_HEADER = ["snapshot", "api_updated"] + TEXT_FIELDS + NUM_FIELDS
-HISTORY_FIELDS = ["missioni", "rosso", "giallo", "verde"]
-HISTORY_DAYS = 7
+
+ADESSO_KEYS = ["missioni", "totale_missioni", "rosso", "giallo", "verde", "bianco",
+               "msb", "msa", "msi", "elisoccorso", "mezzi_altro"]
+OGGI_KEYS = ADESSO_KEYS + ["soccorso_alpino"] + MOTIVI
+
+# eventi che vale la pena segnalare nel feed: (singolare, plurale)
+NOTABILI = {
+    "incidente_stradale": ("incidente stradale", "incidenti stradali"),
+    "evento_violento": ("evento violento", "eventi violenti"),
+    "incidente_montano": ("incidente in montagna", "incidenti in montagna"),
+    "incidente_acqua": ("incidente in acqua", "incidenti in acqua"),
+    "incidente_speleo": ("incidente speleo/forra", "incidenti speleo/forra"),
+    "evento_massa": ("evento di massa", "eventi di massa"),
+    "calamita_naturale": ("calamità naturale", "calamità naturali"),
+    "intossicazione": ("intossicazione", "intossicazioni"),
+    "soccorso_alpino": ("intervento col Soccorso Alpino", "interventi col Soccorso Alpino"),
+    "animali": ("evento con animali", "eventi con animali"),
+}
+
+BASELINE_DAYS = 56
+SERIES_DAYS = 7
+HEATMAP_DAYS = 8
+FEED_HOURS = 24
+FEED_MAX = 150
+GAP_MIN = 40          # oltre questo buco tra letture un'ora non e' calcolabile
 
 
-# --------------------------------------------------------------------------- fetch
+# ============================================================ lettura API
 def fetch(retries: int = 2) -> dict:
-    last_err = None
+    last = None
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(API_URL, headers={"User-Agent": USER_AGENT,
@@ -76,17 +94,16 @@ def fetch(retries: int = 2) -> dict:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as e:  # noqa: BLE001
-            last_err = e
+            last = e
             time.sleep(5 * (attempt + 1))
-    raise RuntimeError(f"Impossibile leggere l'API AREU: {last_err}")
+    raise RuntimeError(f"Impossibile leggere l'API AREU: {last}")
 
 
 def to_int(v):
-    """L'API restituisce stringhe: "17" -> 17, "" -> None."""
     if v is None:
         return None
     s = str(v).strip()
-    if s == "":
+    if not s:
         return None
     try:
         return int(s)
@@ -94,7 +111,15 @@ def to_int(v):
         return None
 
 
-def normalize_row(row: dict) -> dict:
+def iso_day(day_data: str) -> str:
+    try:
+        d, m, y = day_data.strip().split("/")
+        return f"{y}-{m}-{d}"
+    except ValueError:
+        return ""
+
+
+def normalize(row: dict) -> dict:
     out = {k: (row.get(k) or "").strip() for k in TEXT_FIELDS}
     out["day"] = (row.get("day") or "").strip()
     for k in NUM_FIELDS:
@@ -102,156 +127,444 @@ def normalize_row(row: dict) -> dict:
     return out
 
 
-# --------------------------------------------------------------------------- storage
-def append_in_corso(rows: list[dict], snapshot: datetime, api_updated: str) -> str:
-    path = os.path.join(DATA_DIR, "in_corso", snapshot.strftime("%Y-%m") + ".csv")
+# ============================================================ storico su disco
+def migrate_header(path: str) -> None:
+    """Se un CSV esistente ha colonne diverse (versione precedente dello scraper), lo riscrive
+    con le colonne attuali, conservando tutti i valori presenti."""
+    if not os.path.exists(path):
+        return
+    with open(path, newline="", encoding="utf-8") as f:
+        first = next(csv.reader(f), None)
+    if first is None or first == CSV_HEADER:
+        return
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_HEADER, extrasaction="ignore", restval="")
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, path)
+
+
+def append_rows(kind: str, rows: list[dict], snap: datetime, api_updated: str) -> None:
+    path = os.path.join(DATA_DIR, kind, snap.strftime("%Y-%m") + ".csv")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    new_file = not os.path.exists(path)
+    migrate_header(path)
+    new = not os.path.exists(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        if new_file:
+        if new:
             w.writerow(CSV_HEADER)
         for r in rows:
-            w.writerow([snapshot.isoformat(timespec="minutes"), api_updated]
+            w.writerow([snap.isoformat(timespec="minutes"), api_updated]
                        + [r[k] for k in TEXT_FIELDS]
                        + ["" if r[k] is None else r[k] for k in NUM_FIELDS])
-    return path
 
 
-def upsert_giornaliero(rows: list[dict]) -> str:
+def upsert_giornaliero(rows: list[dict]) -> dict:
+    """Aggiorna i totali per (giorno, zona) e restituisce {(giorno, zona): {campo: valore}}."""
     path = os.path.join(DATA_DIR, "giornaliero.csv")
     header = ["data", "aat", "soreu", "aggiornato_alle"] + NUM_FIELDS
-    existing: dict[tuple, list] = {}
+    table: dict[tuple, dict] = {}
     if os.path.exists(path):
         with open(path, newline="", encoding="utf-8") as f:
             for rec in csv.DictReader(f):
-                existing[(rec["data"], rec["aat"])] = [rec.get(h, "") for h in header]
+                table[(rec["data"], rec["aat"])] = rec
     for r in rows:
-        if not r["day_data"] or not r["aat"]:
+        d = iso_day(r["day_data"])
+        if not d or not r["aat"]:
             continue
-        # day_data e' gg/mm/aaaa -> aaaa-mm-gg per ordinare bene
-        d, m, y = r["day_data"].split("/")
-        iso = f"{y}-{m}-{d}"
-        existing[(iso, r["aat"])] = [iso, r["aat"], r["soreu"], r["aggiornato_alle"]] + [
-            "" if r[k] is None else r[k] for k in NUM_FIELDS]
+        rec = {"data": d, "aat": r["aat"], "soreu": r["soreu"], "aggiornato_alle": r["aggiornato_alle"]}
+        rec.update({k: "" if r[k] is None else r[k] for k in NUM_FIELDS})
+        table[(d, r["aat"])] = rec
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(header)
-        for key in sorted(existing):
-            w.writerow(existing[key])
-    return path
+        w = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+        w.writeheader()
+        for key in sorted(table):
+            w.writerow(table[key])
+    return {k: {f: to_int(v.get(f)) for f in OGGI_KEYS} for k, v in table.items()}
 
 
-def read_in_corso(since: datetime | None = None):
-    """Restituisce tuple (snapshot datetime, riga dict) da tutti i CSV mensili."""
-    files = sorted(glob.glob(os.path.join(DATA_DIR, "in_corso", "*.csv")))
-    if since is not None:
-        first_month = since.strftime("%Y-%m")
-        files = [p for p in files if os.path.basename(p)[:7] >= first_month]
-    for p in files:
+def load(kind: str, since: datetime, keys: list[str]) -> dict[datetime, dict[str, dict]]:
+    """{snapshot: {zona: {campo: int, 'day': aaaa-mm-gg, 'agg': hh:mm, 'soreu': ...}}}"""
+    out: dict[datetime, dict[str, dict]] = defaultdict(dict)
+    first_month = since.strftime("%Y-%m")
+    for p in sorted(glob.glob(os.path.join(DATA_DIR, kind, "*.csv"))):
+        if os.path.basename(p)[:7] < first_month:
+            continue
         with open(p, newline="", encoding="utf-8") as f:
             for rec in csv.DictReader(f):
                 try:
                     ts = datetime.fromisoformat(rec["snapshot"])
                 except (KeyError, ValueError):
                     continue
-                if since is not None and ts < since:
+                if ts < since:
                     continue
-                yield ts, rec
+                d = {k: to_int(rec.get(k)) for k in keys}
+                d["day"] = iso_day(rec.get("day_data", ""))
+                d["agg"] = rec.get("aggiornato_alle", "")
+                d["soreu"] = rec.get("soreu", "")
+                out[ts][rec["aat"]] = d
+    return dict(out)
 
 
-# --------------------------------------------------------------------------- site data
-def build_history(now: datetime) -> dict:
-    since = now - timedelta(days=HISTORY_DAYS)
-    by_ts: dict[str, dict] = defaultdict(dict)
-    aats: set[str] = set()
-    for ts, rec in read_in_corso(since):
-        key = ts.isoformat(timespec="minutes")
-        aats.add(rec["aat"])
-        by_ts[key][rec["aat"]] = [to_int(rec.get(f)) for f in HISTORY_FIELDS]
-    times = sorted(by_ts)
-    aat_list = sorted(aats)
-    values = {a: [by_ts[t].get(a) for t in times] for a in aat_list}
-    return {"fields": HISTORY_FIELDS, "aats": aat_list, "t": times, "v": values}
+# ============================================================ calcoli
+class Calc:
+    def __init__(self, inc, ogg, finals, now: datetime):
+        self.inc, self.ogg, self.finals, self.now = inc, ogg, finals, now
+        self.ts = sorted(set(inc) | set(ogg))
+        self.aats = sorted({a for snap in inc.values() for a in snap})
+        # indice: (zona, giorno) -> [(lettura, missioni cumulate)]
+        self.pts: dict[tuple, list] = defaultdict(list)
+        for t in sorted(ogg):
+            for a, d in ogg[t].items():
+                if d["day"] and d["missioni"] is not None:
+                    self.pts[(a, d["day"])].append((t, d["missioni"]))
+
+    # -- utilita'
+    def near(self, target: datetime, tol_min: int):
+        """Lettura piu' vicina a target entro tol_min minuti."""
+        i = bisect.bisect_left(self.ts, target)
+        best = None
+        for j in (i - 1, i):
+            if 0 <= j < len(self.ts):
+                dt = abs((self.ts[j] - target).total_seconds()) / 60
+                if dt <= tol_min and (best is None or dt < best[0]):
+                    best = (dt, self.ts[j])
+        return best[1] if best else None
+
+    def delta(self, aat: str, t0: datetime, t1: datetime, field: str):
+        """Quanti <field> si sono aggiunti tra t0 e t1 (gestisce il passaggio di mezzanotte)."""
+        p, c = self.ogg.get(t0, {}).get(aat), self.ogg.get(t1, {}).get(aat)
+        if not p or not c or p.get(field) is None or c.get(field) is None:
+            return None
+        if c["day"] == p["day"]:
+            d = c[field] - p[field]
+            return d if d >= 0 else None
+        if c["day"] > p["day"]:
+            fin = self.finals.get((p["day"], aat), {}).get(field)
+            return (max(0, fin - p[field]) if fin is not None else 0) + c[field]
+        return None
+
+    # -- ritmo e durata
+    def ritmo(self, aat: str, last: datetime):
+        out = {"arrivi_1h": None, "arrivi_3h": None, "durata_min": None}
+        for hours, key in ((1, "arrivi_1h"), (3, "arrivi_3h")):
+            t0 = self.near(last - timedelta(hours=hours), 15)
+            if t0 is None or t0 >= last:
+                continue
+            d = self.delta(aat, t0, last, "missioni")
+            if d is not None:
+                minutes = (last - t0).total_seconds() / 60
+                out[key] = round(d * hours * 60 / minutes)
+        mezzi = (self.inc.get(last, {}).get(aat) or {}).get("missioni")
+        if out["arrivi_3h"] and mezzi is not None:
+            out["durata_min"] = round(mezzi / (out["arrivi_3h"] / 3) * 60)   # legge di Little
+        return out
+
+    # -- arrivi orari
+    def hourly(self, aat: str, day: date):
+        """Nuove missioni per ciascuna ora del giorno (None se non calcolabile)."""
+        pts = self.pts.get((aat, day.isoformat()), [])
+        if not pts:
+            return [None] * 24
+        times = [p[0] for p in pts]
+        start = datetime(day.year, day.month, day.day, tzinfo=TZ)
+
+        def cum_end(h):
+            if h < 0:
+                return 0
+            boundary = start + timedelta(hours=h + 1)
+            if boundary > self.now:
+                boundary = self.now
+            i = bisect.bisect_left(times, boundary) - 1
+            if i < 0:
+                return None
+            if (boundary - times[i]).total_seconds() / 60 > GAP_MIN:
+                return None
+            return pts[i][1]
+
+        out = []
+        for h in range(24):
+            if start + timedelta(hours=h) >= self.now:
+                out.append(None)
+                continue
+            a, b = cum_end(h - 1), cum_end(h)
+            out.append(None if a is None or b is None or b < a else b - a)
+        return out
 
 
-def build_baseline(now: datetime) -> dict:
-    """Mediana e 90esimo percentile delle missioni in corso per (zona, giorno sett., ora).
-    Usa solo i giorni precedenti a oggi, cosi' "adesso" non influenza "il solito"."""
+def region_sum(dicts: list[dict | None], keys: list[str]):
+    dicts = [d for d in dicts if d]
+    if not dicts:
+        return None
+    out = {}
+    for k in keys:
+        vals = [d.get(k) for d in dicts if d.get(k) is not None]
+        out[k] = sum(vals) if vals else None
+    return out
+
+
+def stats(vals):
+    vals = sorted(vals)
+    if not vals:
+        return None
+    p90 = vals[min(len(vals) - 1, int(round(0.9 * (len(vals) - 1))))]
+    return [round(statistics.median(vals), 1), p90, len(vals)]
+
+
+def wdh(t: datetime) -> str:
+    return f"{t.weekday()}-{t.hour}"
+
+
+def stale_minutes(agg: str, now: datetime):
+    try:
+        h, m = map(int, agg.split(":"))
+    except ValueError:
+        return None
+    t = now.replace(hour=h, minute=m)
+    if t > now + timedelta(minutes=5):
+        t -= timedelta(days=1)
+    return max(0, round((now - t).total_seconds() / 60))
+
+
+def build(now: datetime, finals: dict) -> dict:
+    since = now - timedelta(days=BASELINE_DAYS + 1)
+    inc = load("in_corso", since, ADESSO_KEYS)
+    ogg = load("oggi", since, OGGI_KEYS)
+    C = Calc(inc, ogg, finals, now)
+    last = max(inc) if inc else None
     today = now.date()
-    buckets: dict[tuple, list[int]] = defaultdict(list)
-    region_snap: dict[datetime, int] = defaultdict(int)  # totale regionale per snapshot
-    days_seen: set = set()
-    for ts, rec in read_in_corso():
-        if ts.date() >= today:
+    out = {}
+
+    # ---------------- baseline (giorni precedenti a oggi)
+    base_inc: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    days_seen = set()
+    for t, snap in inc.items():
+        if t.date() >= today:
             continue
-        v = to_int(rec.get("missioni"))
-        if v is None:
+        days_seen.add(t.date())
+        tot, n = 0, 0
+        for a, d in snap.items():
+            if d["missioni"] is not None:
+                base_inc[a][wdh(t)].append(d["missioni"])
+                tot += d["missioni"]; n += 1
+        if n:
+            base_inc["REGIONE"][wdh(t)].append(tot)
+    base_arr: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    hourly_cache: dict[tuple, list] = {}
+    all_days = sorted({date.fromisoformat(d["day"]) for s in ogg.values() for d in s.values() if d["day"]})
+    for day in all_days:
+        region = [0] * 24
+        region_ok = [True] * 24
+        for a in C.aats:
+            hs = C.hourly(a, day)
+            hourly_cache[(a, day)] = hs
+            for h, v in enumerate(hs):
+                if v is None:
+                    region_ok[h] = False
+                else:
+                    region[h] += v
+                    if day < today:
+                        base_arr[a][f"{day.weekday()}-{h}"].append(v)
+        rh = [region[h] if region_ok[h] else None for h in range(24)]
+        hourly_cache[("REGIONE", day)] = rh
+        if day < today:
+            for h, v in enumerate(rh):
+                if v is not None:
+                    base_arr["REGIONE"][f"{day.weekday()}-{h}"].append(v)
+    baseline = {
+        "giorni_di_storico": len(days_seen),
+        "in_corso": {a: {k: stats(v) for k, v in m.items()} for a, m in base_inc.items()},
+        "arrivi_ora": {a: {k: stats(v) for k, v in m.items()} for a, m in base_arr.items()},
+    }
+    out["baseline.json"] = baseline
+
+    def solito(table, a, t):
+        v = baseline[table].get(a, {}).get(wdh(t))
+        return {"med": v[0], "p90": v[1], "n": v[2]} if v and v[2] >= 2 else None
+
+    # ---------------- latest
+    if last is None:
+        raise RuntimeError("nessuna lettura disponibile")
+    yest = today - timedelta(days=1)
+    t_ieri = C.near(last - timedelta(hours=24), 25)
+    zone = []
+    for a in C.aats:
+        i = inc[last].get(a)
+        o = ogg.get(last, {}).get(a)
+        fin_ieri = finals.get((yest.isoformat(), a))
+        ieri_ora = None
+        if t_ieri and a in ogg.get(t_ieri, {}) and ogg[t_ieri][a]["day"] == yest.isoformat():
+            ieri_ora = {k: ogg[t_ieri][a][k] for k in OGGI_KEYS}
+        zone.append({
+            "aat": a,
+            "soreu": (i or o or {}).get("soreu", ""),
+            "agg_adesso": (i or {}).get("agg"),
+            "fermo_da_min": stale_minutes((i or {}).get("agg", ""), last),
+            "agg_oggi": (o or {}).get("agg"),
+            "adesso": {k: i[k] for k in ADESSO_KEYS} if i else None,
+            "oggi": {k: o[k] for k in OGGI_KEYS} if o and o["day"] == today.isoformat() else None,
+            "ieri": fin_ieri,
+            "ieri_stessa_ora": ieri_ora,
+            "ritmo": C.ritmo(a, last),
+            "solito_adesso": solito("in_corso", a, last),
+            "solito_arrivi_ora": solito("arrivi_ora", a, last),
+        })
+    reg_ritmo = {"arrivi_1h": None, "arrivi_3h": None, "durata_min": None}
+    for k in ("arrivi_1h", "arrivi_3h"):
+        vals = [z["ritmo"][k] for z in zone]
+        reg_ritmo[k] = sum(vals) if vals and all(v is not None for v in vals) else None
+    reg_adesso = region_sum([z["adesso"] for z in zone], ADESSO_KEYS)
+    if reg_ritmo["arrivi_3h"] and reg_adesso and reg_adesso["missioni"] is not None:
+        reg_ritmo["durata_min"] = round(reg_adesso["missioni"] / (reg_ritmo["arrivi_3h"] / 3) * 60)
+    regione = {
+        "aat": "LOMBARDIA",
+        "adesso": reg_adesso,
+        "oggi": region_sum([z["oggi"] for z in zone], OGGI_KEYS),
+        "ieri": region_sum([z["ieri"] for z in zone], OGGI_KEYS),
+        "ieri_stessa_ora": region_sum([z["ieri_stessa_ora"] for z in zone], OGGI_KEYS)
+        if all(z["ieri_stessa_ora"] for z in zone) else None,
+        "ritmo": reg_ritmo,
+        "solito_adesso": solito("in_corso", "REGIONE", last),
+        "solito_arrivi_ora": solito("arrivi_ora", "REGIONE", last),
+    }
+    out["latest.json"] = {"snapshot": last.isoformat(timespec="minutes"),
+                          "giorni_di_storico": baseline["giorni_di_storico"],
+                          "regione": regione, "zone": zone}
+
+    # ---------------- serie 7 giorni
+    s_since = last - timedelta(days=SERIES_DAYS)
+    ts7 = [t for t in sorted(inc) if t >= s_since]
+    fleet = ["missioni", "rosso", "msb", "msa", "msi", "elisoccorso"]
+    reg = {k: [] for k in fleet}
+    per = {a: [] for a in C.aats}
+    for t in ts7:
+        snap = inc[t]
+        for a in C.aats:
+            per[a].append((snap.get(a) or {}).get("missioni"))
+        for k in fleet:
+            vals = [d.get(k) for d in snap.values() if d.get(k) is not None]
+            reg[k].append(sum(vals) if vals else None)
+    out["series.json"] = {"t": [t.isoformat(timespec="minutes") for t in ts7],
+                          "regione": reg, "zone": per}
+
+    # ---------------- arrivi orari (heatmap)
+    hdays = [today - timedelta(days=i) for i in range(HEATMAP_DAYS - 1, -1, -1)]
+    out["arrivi.json"] = {
+        "giorni": [d.isoformat() for d in hdays],
+        "ora_corrente": now.hour,
+        "regione": [hourly_cache.get(("REGIONE", d), [None] * 24) for d in hdays],
+        "zone": {a: [hourly_cache.get((a, d), [None] * 24) for d in hdays] for a in C.aats},
+    }
+
+    # ---------------- feed degli eventi
+    f_since = last - timedelta(hours=FEED_HOURS)
+    tsf = [t for t in C.ts if t >= f_since - timedelta(minutes=30)]
+    feed = []
+    surge_on: dict[str, bool] = {}
+
+    def surge_state(a, t, v):
+        b = solito("in_corso", a, t)
+        if not b or v is None:
+            return None, b
+        above = v > b["p90"] and v - b["med"] >= max(4, 0.3 * b["med"])
+        back = v <= b["med"] * 1.1
+        return ("su" if above else "giu" if back else "mezzo"), b
+
+    for t0, t1 in zip(tsf, tsf[1:]):
+        if (t1 - t0).total_seconds() / 60 > GAP_MIN:
             continue
-        days_seen.add(ts.date())
-        buckets[(rec["aat"], ts.weekday(), ts.hour)].append(v)
-        region_snap[ts] += v
-    for ts, total in region_snap.items():
-        buckets[("REGIONE", ts.weekday(), ts.hour)].append(total)
+        reg_v = 0
+        for a in C.aats + ["LOMBARDIA"]:
+            if a == "LOMBARDIA":
+                v = sum((d.get("missioni") or 0) for d in inc.get(t1, {}).values()) if t1 in inc else None
+                st, b = surge_state("REGIONE", t1, v)
+            else:
+                i1 = inc.get(t1, {}).get(a) or {}
+                i0 = inc.get(t0, {}).get(a) or {}
+                v = i1.get("missioni")
+                st, b = surge_state(a, t1, v)
+            tags, parts = [], []
+            prev = surge_on.get(a, False)
+            if st == "su" and not prev:
+                surge_on[a] = True
+                if t1 > f_since:
+                    tags.append("picco")
+                    parts.append(f"mezzi in uscita sopra il solito: {v} (di solito {b['med']:g})")
+            elif st == "giu" and prev:
+                surge_on[a] = False
+                if t1 > f_since:
+                    tags.append("rientro")
+                    parts.append(f"situazione rientrata: {v} mezzi in uscita (di solito {b['med']:g})")
+            if a != "LOMBARDIA" and t1 > f_since:
+                dm = C.delta(a, t0, t1, "missioni")
+                dr = C.delta(a, t0, t1, "rosso")
+                if (i1.get("elisoccorso") or 0) > (i0.get("elisoccorso") or 0) and i0:
+                    tags.append("eli")
+                    parts.append("elisoccorso in volo")
+                for k, (sg, pl) in NOTABILI.items():
+                    d = C.delta(a, t0, t1, k)
+                    if d:
+                        tags.append(k)
+                        parts.append(f"{d} {sg if d == 1 else pl}")
+                # i codici rossi sono frequenti: da soli fanno notizia solo se arrivano a raffica
+                raffica = dr is not None and dm and dr >= 3 and dr / dm >= 0.5
+                if dr and (parts or raffica):
+                    tags.insert(0, "rosso")
+                    parts.insert(0, f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
+                if parts and dm:
+                    parts.insert(0, f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}")
+            if parts and t1 > f_since:
+                feed.append({"t": t1.isoformat(timespec="minutes"), "aat": a,
+                             "tag": tags, "testo": " · ".join(parts)})
+    feed.reverse()
+    out["feed.json"] = {"eventi": feed[:FEED_MAX]}
+    return out
 
-    def stats(vals):
-        vals = sorted(vals)
-        p90 = vals[min(len(vals) - 1, int(round(0.9 * (len(vals) - 1))))]
-        return [statistics.median(vals), p90, len(vals)]
 
-    per_aat: dict[str, dict] = defaultdict(dict)
-    for (aat, wd, h), vals in buckets.items():
-        per_aat[aat][f"{wd}-{h}"] = stats(vals)
-    return {"giorni_di_storico": len(days_seen), "aat": dict(per_aat)}
-
-
-def write_json(name: str, obj) -> None:
-    os.makedirs(SITE_DATA_DIR, exist_ok=True)
-    tmp = os.path.join(SITE_DATA_DIR, name + ".tmp")
+def write_json(out_dir: str, name: str, obj) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    tmp = os.path.join(out_dir, name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
-    os.replace(tmp, os.path.join(SITE_DATA_DIR, name))
+    os.replace(tmp, os.path.join(out_dir, name))
 
 
-# --------------------------------------------------------------------------- main
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--from-file", help="usa un JSON salvato invece dell'API (per test)")
-    ap.add_argument("--now", help="orario ISO da usare come snapshot (per test)")
+    ap.add_argument("--from-file", help="usa un JSON salvato invece dell'API (test)")
+    ap.add_argument("--now", help="orario ISO da usare come momento della lettura (test)")
+    ap.add_argument("--out", default=os.path.join(ROOT, "docs", "data"),
+                    help="cartella dove scrivere i JSON della dashboard")
+    ap.add_argument("--only-store", action="store_true", help="salva lo storico senza calcolare (test)")
+    ap.add_argument("--only-build", action="store_true", help="ricalcola i JSON senza leggere l'API")
     args = ap.parse_args()
-
-    if args.from_file:
-        with open(args.from_file, encoding="utf-8") as f:
-            payload = json.load(f)
-    else:
-        payload = fetch()
 
     now = datetime.fromisoformat(args.now).astimezone(TZ) if args.now else datetime.now(TZ)
     now = now.replace(second=0, microsecond=0)
 
-    in_corso = [normalize_row(r) for r in payload.get("in_corso", [])]
-    del_giorno = [normalize_row(r) for r in payload.get("del_giorno", [])]
-    if not in_corso:
-        print("Attenzione: 'in_corso' vuoto, niente da salvare", file=sys.stderr)
-        return 1
+    if args.only_build:
+        finals = upsert_giornaliero([])
+    else:
+        payload = json.load(open(args.from_file, encoding="utf-8")) if args.from_file else fetch()
+        in_corso = [normalize(r) for r in payload.get("in_corso", [])]
+        del_giorno = [normalize(r) for r in payload.get("del_giorno", [])]
+        if not in_corso:
+            print("Attenzione: 'in_corso' vuoto, niente da salvare", file=sys.stderr)
+            return 1
+        api_updated = payload.get("updated", "")
+        append_rows("in_corso", in_corso, now, api_updated)
+        append_rows("oggi", [r for r in del_giorno if r["day"] == "OGGI"], now, api_updated)
+        finals = upsert_giornaliero(del_giorno)
+        if args.only_store:
+            return 0
 
-    api_updated = payload.get("updated", "")
-    append_in_corso(in_corso, now, api_updated)
-    upsert_giornaliero(del_giorno)
-
-    write_json("latest.json", {
-        "snapshot": now.isoformat(timespec="minutes"),
-        "api_updated": api_updated,
-        "in_corso": in_corso,
-        "oggi": [r for r in del_giorno if r["day"] == "OGGI"],
-        "ieri": [r for r in del_giorno if r["day"] == "IERI"],
-    })
-    write_json("history.json", build_history(now))
-    write_json("baseline.json", build_baseline(now))
-
-    tot = sum(r["missioni"] or 0 for r in in_corso)
-    print(f"{now:%Y-%m-%d %H:%M}  zone={len(in_corso)}  missioni in corso={tot}")
+    for name, obj in build(now, finals).items():
+        write_json(args.out, name, obj)
+    print(f"{now:%Y-%m-%d %H:%M}  ok")
     return 0
 
 
