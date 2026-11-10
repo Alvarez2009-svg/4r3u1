@@ -73,14 +73,21 @@ def simulate(start, end, seed=7):
             motivo = pick(rnd, MOTIVI)
             if monti and rnd.random() < .006:
                 motivo = "incidente_montano"
-            n_mezzi = 2 if rnd.random() < .09 else 1
+            if rnd.random() < .06:
+                # scheda chiusa senza invio (risolta al telefono, rifiuto, doppione): conta come evento,
+                # nessun mezzo, si chiude in pochi minuti
+                miss.append(dict(start=t, end=t + timedelta(minutes=rnd.uniform(2, 9)), tipo=None,
+                                 codice=None, evento=ev, motivo=motivo, alpino=False))
+                continue
+            # come nella realta': il primo mezzo e' sempre un MSB (in montagna a volte solo l'elisoccorso),
+            # i mezzi avanzati e l'elisoccorso arrivano in aggiunta
+            n_mezzi = 2 if rnd.random() < .12 + eli else 1
             for k in range(n_mezzi):
                 if k == 1:
-                    tipo = "msa" if rnd.random() < .6 else "msi"
-                else:
                     x = rnd.random()
-                    tipo = "elisoccorso" if x < eli or motivo == "incidente_montano" and x < .5 else \
-                        "msa" if x < eli + .05 else "msi" if x < eli + .1 else "msb"
+                    tipo = "elisoccorso" if x < eli / (.12 + eli) else "msa" if x < .6 else "msi"
+                else:
+                    tipo = "elisoccorso" if motivo == "incidente_montano" and rnd.random() < .3 else "msb"
                 durata = rnd.lognormvariate(math.log(70 if aat != "MILANO" else 85), .45)
                 codice = "rosso" if n_mezzi == 2 and rnd.random() < .6 else pick(rnd, CODICI)
                 miss.append(dict(start=t, end=t + timedelta(minutes=durata), tipo=tipo,
@@ -98,10 +105,12 @@ def payload(sim, t, rnd):
         r = {k: 0 for k in ALL_NUM}
         eventi = {}
         for m in ms:
+            eventi[m["evento"]] = m
+            if m["tipo"] is None:
+                continue
             r["missioni"] += 1
             r[m["tipo"]] += 1
             r[m["codice"]] += 1
-            eventi[m["evento"]] = m
         r["totale_missioni"] = len(eventi)
         r["soccorsi"] = len(eventi)
         for m in eventi.values():
