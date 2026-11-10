@@ -288,7 +288,7 @@ footer a{color:var(--text-2)}
     <!-- schede e centrale -->
     <section class="panel c12">
       <div class="ph"><span class="when">Oggi · dalle 00:00</span><h3>Schede e centrale</h3>
-        <span class="help">La centrale apre una scheda per ogni chiamata di soccorso; il mezzo viene contato solo quando parte. Una parte delle schede si chiude senza invio (risolta al telefono, rifiuto, annullo, chiamata doppia). "Senza invio" e "in attesa" sono stime ricavate confrontando le letture ogni 10 minuti.</span></div>
+        <span class="help">La centrale apre una scheda per ogni chiamata di soccorso; il mezzo viene contato solo quando parte. Una parte delle schede si chiude senza invio (risolta al telefono, rifiuto, annullo, chiamata doppia). Il saldo delle schede scoperte scende solo con una prova: un MSB in più, oppure una chiusura misurata quando i contatori della zona sono allineati.</span></div>
       <div class="kv" id="schKv"></div>
       <div class="sch-grid">
         <div><div class="chart" id="schOre"></div><div class="readout" id="schRead"></div></div>
@@ -315,7 +315,7 @@ footer a{color:var(--text-2)}
     I dati sono letti ogni ~10 minuti. "Il solito" è la mediana delle ultime 8 settimane per giorno della settimana e ora.
     La durata delle missioni è una stima statistica (legge di Little), non un dato AREU.
     MSB = mezzo di soccorso di base (soccorritori) · MSA1 = mezzo avanzato con infermiere · MSA2 = mezzo avanzato con infermiere e medico (definizioni AREU).
-    Scheda = chiamata di soccorso registrata dalla centrale (contata all'apertura); i mezzi sono contati alla partenza. Nel registro, rientri e schede chiuse senza invio compaiono solo quando i contatori della zona sono allineati; "probabilmente" indica un abbinamento tra scheda e mezzo letti in momenti diversi.
+    Scheda = chiamata di soccorso registrata dalla centrale (contata all'apertura); i mezzi sono contati alla partenza. Nel registro, rientri e chiusure compaiono solo quando i contatori della zona sono allineati (anche tra letture non consecutive). Le schede senza MSB entrano nel saldo della zona e ne escono solo quando parte un MSB in più o se ne misura la chiusura; l'orario è un intervallo quando nel frattempo il buco può essersi spostato su una scheda più recente. Un MSB e un MSA1/MSA2 con lo stesso codice partiti insieme sono considerati sulla stessa missione.
     Il codice colore di ogni mezzo e il motivo a cui è legato compaiono solo quando la ricostruzione è univoca o molto probabile. Le segnalazioni "più ambulanze sulla stessa scena", "attesa prolungata" e "regione" sono stime statistiche.
   </footer>
 </main>
@@ -624,7 +624,9 @@ function renderTiles(){
       + (z.fermo_da_min >= 30 ? `<span class="stale" title="Dato fermo da ${z.fermo_da_min} min"></span>` : "");
     const d = sol ? (Math.abs(Math.round(pct(n.missioni, sol.med))) < 5 ? `come al solito` : `${n.missioni >= sol.med ? "+" : ""}${Math.round(pct(n.missioni, sol.med))}% · solito ${fmt(sol.med)}`) : `${fmt(n.rosso)} rossi`;
     const ds = sol ? (Math.abs(Math.round(pct(n.missioni, sol.med))) < 5 ? "=" : `${n.missioni >= sol.med ? "+" : ""}${Math.round(pct(n.missioni, sol.med))}%`) : `${fmt(n.rosso)} ross${n.rosso === 1 ? "o" : "i"}`;
-    b.innerHTML = `<span class="ic">${icons}</span><span class="n"><span class="lg">${NICE(a)}</span><span class="sh">${SIGLA[a] || a.slice(0,2)}</span></span><span class="v num">${fmt(n.missioni)}</span><span class="d"><span class="lg">${d}</span><span class="sh">${ds}</span></span><span class="mb">${mb}</span>`;
+    const sc = z.schede?.scoperte;
+    const dsc = sc ? `<span style="color:var(--warn)"> · ${sc} scopert${sc === 1 ? "a" : "e"}</span>` : "";
+    b.innerHTML = `<span class="ic">${icons}</span><span class="n"><span class="lg">${NICE(a)}</span><span class="sh">${SIGLA[a] || a.slice(0,2)}</span></span><span class="v num">${fmt(n.missioni)}</span><span class="d"><span class="lg">${d}${dsc}</span><span class="sh">${ds}</span></span><span class="mb">${mb}</span>`;
     b.setAttribute("aria-label", `${NICE(a)}: ${fmt(n.missioni)} mezzi in missione${sol ? `, di solito ${fmt(sol.med)}` : ""}`);
     b.setAttribute("aria-pressed", S.focus === a);
     b.onclick = () => { setFocus(a); window.scrollTo({top: 0, behavior: "smooth"}); };
@@ -647,7 +649,7 @@ function renderFeed(){
   const dove = S.focus === "LOMBARDIA" ? "in Lombardia" : `a ${NICE(S.focus)}`;
   $("feedHelp").textContent = top
     ? "Solo le segnalazioni: elisoccorso, raffiche di codici rossi, eventi particolari, picchi, più ambulanze sulla stessa scena, schede senza mezzo da oltre 30 minuti."
-    : "Ogni ~10 minuti, per ogni zona: schede nuove, mezzi partiti con codice e motivo quando ricostruibili, schede chiuse senza invio o in attesa, rientri.";
+    : "Ogni ~10 minuti, per ogni zona: schede nuove, mezzi partiti con codice e motivo quando ricostruibili, schede rimaste senza MSB e come si chiudono, saldo delle schede scoperte, rientri.";
   const present = [...new Set(ev.map(e => e.cat))];
   $("feedLeg").innerHTML = top && present.length ? Object.entries(CAT).filter(([k]) => present.includes(k)).map(([, [l, c]]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("") : "";
   if(!ev.length){
@@ -822,12 +824,14 @@ function renderSchede(){
     $("schOre").innerHTML = ""; $("schRead").innerHTML = ""; $("schTab").innerHTML = ""; return;
   }
   const p = (n, d) => d ? Math.round(n / d * 100) : null;
+  const etaTxt = x => x.eta_min == null ? "" : x.eta_max < 10 ? "appena comparse" : (x.eta_max - x.eta_min < 5 ? `da ${x.eta_min} min` : `da ${x.eta_min}–${x.eta_max} min`);
+  const eta = b.scoperte ? etaTxt(b) : "";
   $("schKv").innerHTML = `
     <div><div class="v">${fmt(b.schede)}</div><div class="l">schede aperte oggi</div></div>
-    <div><div class="v">${fmt(b.con_mezzo)}</div><div class="l">con un mezzo inviato</div><div class="s">${p(b.con_mezzo, b.schede) ?? "–"}% delle schede</div></div>
-    <div><div class="v" style="color:var(--orange)">${fmt(b.senza_invio)}</div><div class="l">chiuse senza invio (stima)</div><div class="s">${p(b.senza_invio, b.schede) ?? "–"}% · ${fmt(b.senza_rilevate)} viste chiudersi</div></div>
-    <div><div class="v">${fmt(b.in_attesa)}</div><div class="l">in attesa del mezzo adesso</div><div class="s">${b.attesa_30 ? `${b.attesa_30} da oltre 30 min` : "nessuna da oltre 30 min"}</div></div>
-    <div><div class="v">${fmt(b.msb_extra)}</div><div class="l">MSB senza scheda nuova</div><div class="s">rinforzi su interventi già aperti</div></div>`;
+    <div><div class="v">${fmt(b.con_msb)}</div><div class="l">con un MSB</div><div class="s">${p(b.con_msb, b.schede) ?? "–"}% delle schede</div></div>
+    <div><div class="v" style="color:var(--orange)">${fmt(b.senza_invio)}</div><div class="l">chiuse senza invio</div><div class="s">almeno ${p(b.senza_invio, b.schede) ?? "–"}% · misurate, nessun mezzo partito</div></div>
+    <div><div class="v"${b.scoperte ? ' style="color:var(--warn)"' : ""}>${b.scoperte != null ? fmt(b.scoperte) : "–"}</div><div class="l">${b.scoperte ? "schede scoperte adesso" : "scoperte adesso: in pari"}</div><div class="s">${b.scoperte ? [eta, b.in_verifica ? "in verifica" : ""].filter(Boolean).join(" · ") || "&nbsp;" : "ogni scheda ha il suo MSB"}</div></div>
+    <div><div class="v">${fmt(b.rinforzi)}</div><div class="l">MSB di rinforzo</div><div class="s">${fmt(b.coperte_dopo)} schede coperte in ritardo${b.residuo ? ` · ${fmt(b.residuo)} residuo` : ""}</div></div>`;
   // grafico: schede per ora, divise in con mezzo / chiuse senza invio
   const ore = b.ore || [], wrap = $("schOre");
   const rows = ore.map((v, h) => v ? {h, tot: v[0], senza: Math.min(v[1], v[0]), con: Math.max(0, v[0] - v[1])} : null);
@@ -847,8 +851,8 @@ function renderSchede(){
     });
     for(let h = 0; h < 24; h += (W < 600 ? 6 : 3)) s += `<text x="${m.l + h*bw + bw/2}" y="${H-5}" text-anchor="middle">${String(h).padStart(2,"0")}</text>`;
     for(let h = 0; h < 24; h++) s += `<rect class="sb" data-h="${h}" x="${m.l + h*bw}" y="${m.t}" width="${bw}" height="${ih}" fill="transparent"/>`;
-    wrap.innerHTML = s + `</svg><div class="legend"><span><i class="sw" style="background:var(--blue)"></i>con mezzo o ancora in attesa</span><span><i class="sw" style="background:var(--orange)"></i>chiuse senza invio (stima)</span><span style="color:var(--muted)">ora in corso più chiara: parziale</span></div>`;
-    const read = h => { const r = rows[h]; return r ? `<span class="when2">ore ${String(h).padStart(2,"0")}–${String((h+1)%24).padStart(2,"0")}</span><span>Schede <b>${fmt(r.tot)}</b></span><span><i class="sw" style="background:var(--blue)"></i>Con mezzo <b>${fmt(r.con)}</b></span><span><i class="sw" style="background:var(--orange)"></i>Senza invio <b>${fmt(r.senza)}</b>${r.tot ? ` (${Math.round(r.senza / r.tot * 100)}%)` : ""}</span>` : `<span class="when2">ore ${String(h).padStart(2,"0")}–${String((h+1)%24).padStart(2,"0")}</span><span>nessun dato</span>`; };
+    wrap.innerHTML = s + `</svg><div class="legend"><span><i class="sw" style="background:var(--blue)"></i>altre schede (con mezzo o in attesa)</span><span><i class="sw" style="background:var(--orange)"></i>chiuse senza invio (misurate)</span><span style="color:var(--muted)">ora in corso più chiara: parziale</span></div>`;
+    const read = h => { const r = rows[h]; return r ? `<span class="when2">ore ${String(h).padStart(2,"0")}–${String((h+1)%24).padStart(2,"0")}</span><span>Schede <b>${fmt(r.tot)}</b></span><span><i class="sw" style="background:var(--blue)"></i>Altre <b>${fmt(r.con)}</b></span><span><i class="sw" style="background:var(--orange)"></i>Senza invio <b>${fmt(r.senza)}</b>${r.tot ? ` (${Math.round(r.senza / r.tot * 100)}%)` : ""}</span>` : `<span class="when2">ore ${String(h).padStart(2,"0")}–${String((h+1)%24).padStart(2,"0")}</span><span>nessun dato</span>`; };
     const def = Math.max(0, cur - 1);
     $("schRead").innerHTML = read(def);
     wrap.querySelectorAll(".sb").forEach(r => { const h = +r.dataset.h; r.addEventListener("pointerenter", () => $("schRead").innerHTML = read(h)); r.addEventListener("pointerdown", () => $("schRead").innerHTML = read(h)); });
@@ -858,12 +862,13 @@ function renderSchede(){
   const zs = S.L.zone.filter(z => z.schede).sort((a, c) => c.schede.schede - a.schede.schede);
   const R = S.L.regione.schede;
   const tr = (a, x, sel, bold) => `<tr data-a="${a}" class="${sel ? "sel" : ""}"${bold ? ' style="font-weight:700"' : ""}><td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${NICE(a)}</td>${[
-      fmt(x.schede), fmt(x.con_mezzo), fmt(x.senza_invio), x.schede ? `${Math.round(x.senza_invio / x.schede * 100)}%` : "–",
-      x.attesa_30 ? `${fmt(x.in_attesa)} <span style="color:var(--muted)">(${x.attesa_30})</span>` : fmt(x.in_attesa), fmt(x.msb_extra)
+      fmt(x.schede), fmt(x.con_msb), fmt(x.senza_invio), x.schede ? `${Math.round(x.senza_invio / x.schede * 100)}%` : "–",
+      x.scoperte ? `<span style="color:var(--warn)">${fmt(x.scoperte)}</span>${x.eta_min != null && !bold ? ` <span style="color:var(--muted)">${x.eta_max < 10 ? "nuove" : `${x.eta_min}–${x.eta_max}′`}</span>` : ""}${x.in_verifica && !bold ? ' <span style="color:var(--muted)">?</span>' : ""}` : (bold ? "0" : "in pari"),
+      fmt(x.rinforzi)
     ].map(v => `<td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${v}</td>`).join("")}</tr>`;
-  $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th>Con mezzo</th><th>Senza invio</th><th>%</th><th>In attesa</th><th>MSB in più</th></tr></thead><tbody>${
+  $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th>Con MSB</th><th>Senza invio</th><th>%</th><th>Scoperte</th><th>Rinforzi</th></tr></thead><tbody>${
     zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>
-    <div class="collect">Tra parentesi: in attesa da oltre 30 minuti. Le zone che aggiornano i due contatori in momenti diversi (es. Milano) hanno meno chiusure "viste" e più stime.</div>`;
+    <div class="collect">Scoperte = schede che adesso non hanno ancora un MSB, con l'età possibile in minuti (il buco può essersi spostato su una scheda più recente). "?" = in verifica: i contatori della zona non sono allineati da oltre 30 minuti, quindi qualche chiusura potrebbe non essere ancora vista.</div>`;
   $("schTab").querySelectorAll("tbody tr").forEach(r => r.onclick = () => { S.focus = r.dataset.a; renderAll(); window.scrollTo({top: 0, behavior: "smooth"}); });
 }
 
