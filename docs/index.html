@@ -141,16 +141,30 @@ button{font:inherit;color:inherit}
 
 /* ---------- feed */
 .feed{max-height:470px;overflow:auto;margin:0 -6px;padding:0 6px;scrollbar-width:thin;scrollbar-color:#2a3846 transparent}
-.fi{display:grid;grid-template-columns:44px 14px 1fr;gap:8px;padding:8px 0;border-bottom:1px solid var(--grid);align-items:start}
+.fi{display:grid;grid-template-columns:42px 3px 1fr;gap:10px;padding:9px 0;border-bottom:1px solid var(--grid);align-items:stretch}
 .fi:last-child{border-bottom:0}
 .fi .tm{font:600 12px/1.5 var(--mono);color:var(--text-2)}
-.fi .mk{width:10px;height:10px;border-radius:50%;margin-top:4px}
-.fi .zz{font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2)}
-.fi .tx{font-size:13px;line-height:1.4}
+.fi .br{border-radius:2px;background:var(--line)}
+.fi .zz{font:650 10.5px/1.5 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-2)}
+.fi .zz .ns{text-transform:none;letter-spacing:0;font-weight:500;color:var(--muted)}
+.fi .fh{font-size:13.5px;font-weight:600;line-height:1.35;margin-top:1px}
+.fi .fd{font-size:12.5px;color:var(--text-2);margin-top:2px;line-height:1.4}
+.rw{display:grid;grid-template-columns:74px 1fr;gap:8px;font-size:12.5px;line-height:1.45;margin-top:3px}
+.rw .l{font:600 9.5px/1.95 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.rw.es .l,.rw.es span{color:var(--text-2)}
+.cd{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 4px 0 1px;vertical-align:0}
+.dsep{font:650 10.5px/1 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:12px 0 4px}
+.cleg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--text-2);margin:-4px 0 8px}
+.cleg i{display:inline-block;width:3px;height:10px;border-radius:1px;margin-right:5px;vertical-align:-1px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:auto}
 .seg button{background:transparent;border:0;padding:5px 10px;font-size:12px;color:var(--text-2);cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--panel-3);color:var(--text);font-weight:600}
 .empty-note{color:var(--muted);font-size:13px;padding:14px 0}
+.sch-grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:20px;align-items:start}
+@media (max-width:1100px){.sch-grid{grid-template-columns:1fr}}
+.sch-tab table{min-width:0}
+.sch-tab td,.sch-tab th{padding:6px 6px}
+.kv .s{font-size:11.5px;color:var(--muted)}
 
 /* ---------- grafici */
 svg{display:block;width:100%;overflow:visible}
@@ -241,7 +255,8 @@ footer a{color:var(--text-2)}
     <section class="panel c5">
       <div class="ph"><span class="when">Ultime 24 ore</span><h3>Registro eventi</h3>
         <div class="seg" id="feedMode"><button data-v="top" aria-pressed="true">Rilevanti</button><button data-v="all" aria-pressed="false">Tutti</button></div>
-        <span class="help">Ricavato confrontando una lettura con la precedente (ogni ~10 minuti). "Rilevanti" mostra solo gli eventi notevoli, "Tutti" ogni nuova uscita.</span></div>
+        <span class="help" id="feedHelp"></span></div>
+      <div class="cleg" id="feedLeg"></div>
       <div class="feed" id="feed"></div>
     </section>
 
@@ -270,6 +285,17 @@ footer a{color:var(--text-2)}
       <div class="readout" id="motiviRead"></div>
     </section>
 
+    <!-- schede e centrale -->
+    <section class="panel c12">
+      <div class="ph"><span class="when">Oggi · dalle 00:00</span><h3>Schede e centrale</h3>
+        <span class="help">La centrale apre una scheda per ogni chiamata di soccorso; il mezzo viene contato solo quando parte. Una parte delle schede si chiude senza invio (risolta al telefono, rifiuto, annullo, chiamata doppia). "Senza invio" e "in attesa" sono stime ricavate confrontando le letture ogni 10 minuti.</span></div>
+      <div class="kv" id="schKv"></div>
+      <div class="sch-grid">
+        <div><div class="chart" id="schOre"></div><div class="readout" id="schRead"></div></div>
+        <div class="tbl-wrap sch-tab" id="schTab"></div>
+      </div>
+    </section>
+
     <!-- heatmap -->
     <section class="panel c12">
       <div class="ph"><span class="when">Ultimi 8 giorni</span><h3>Il respiro della settimana</h3><span class="help">Nuovi mezzi inviati per ogni ora. Più chiaro = più uscite. Si riconoscono notti, ore di punta e weekend.</span></div>
@@ -285,11 +311,12 @@ footer a{color:var(--text-2)}
   </div>
 
   <footer>
-    Fonte: <a href="https://www.areu.lombardia.it/web/home/missioni-aat-real-time" target="_blank" rel="noopener">AREU Lombardia – Missioni 118 in tempo reale</a>. Progetto personale, non ufficiale.
+    Dati pubblici di <a href="https://www.areu.lombardia.it" target="_blank" rel="noopener">AREU Lombardia</a>. Progetto personale non ufficiale, non affiliato ad AREU: le elaborazioni e le stime sono dell'autore.
     I dati sono letti ogni ~10 minuti. "Il solito" è la mediana delle ultime 8 settimane per giorno della settimana e ora.
     La durata delle missioni è una stima statistica (legge di Little), non un dato AREU.
     MSB = mezzo di soccorso di base (soccorritori) · MSA1 = mezzo avanzato con infermiere · MSA2 = mezzo avanzato con infermiere e medico (definizioni AREU).
-    Nel registro, "rientrati" compare solo quando i contatori della zona sono allineati; "intervento complesso" e "tendenza regionale" sono stime statistiche.
+    Scheda = chiamata di soccorso registrata dalla centrale (contata all'apertura); i mezzi sono contati alla partenza. Nel registro, rientri e schede chiuse senza invio compaiono solo quando i contatori della zona sono allineati; "probabilmente" indica un abbinamento tra scheda e mezzo letti in momenti diversi.
+    Il codice colore di ogni mezzo e il motivo a cui è legato compaiono solo quando la ricostruzione è univoca o molto probabile. Le segnalazioni "più ambulanze sulla stessa scena", "attesa prolungata" e "regione" sono stime statistiche.
   </footer>
 </main>
 
@@ -319,14 +346,10 @@ const ICON = {
   msi:'<svg width="16" height="16" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="currentColor"/><path d="M10 5v10M5 10h10" stroke="#151d26" stroke-width="3"/></svg>',
   elisoccorso:'<svg width="20" height="14" viewBox="0 0 26 18"><path d="M3 2h20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M13 2v3" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M7 5h9c3 0 5 2 5 5s-2 4-5 4H9c-2 0-4-2-4-4V7z"/><path d="M5 9H1M1 7v4" stroke="currentColor" stroke-width="2"/><path d="M9 16h10" stroke="currentColor" stroke-width="1.6"/></svg>',
 };
-const TAGS = { // registro eventi: colore e rilevanza
-  picco:["Picco","--rosso",3], rientro:["Rientro","--blue",2], eli:["Elisoccorso","--orange",3],
-  incidente_montano:["Montagna","--orange",3], soccorso_alpino:["Soccorso alpino","--orange",3],
-  incidente_acqua:["Acqua","--aqua",3], incidente_speleo:["Speleo","--orange",3], evento_massa:["Evento di massa","--rosso",3],
-  calamita_naturale:["Calamità","--rosso",3], rosso:["Codici rossi","--rosso",2], incidente_stradale:["Strada","--giallo",1],
-  evento_violento:["Violenza","--violet",1], intossicazione:["Intossicazione","--violet",1], animali:["Animali","--muted",1],
-  routine:["","--line",0],
-  complesso:["Intervento complesso","--orange",3], regionale:["Tendenza regionale","--rosso",3], traguardo:["Traguardo","--blue",2],
+const CAT = { // registro "Rilevanti": etichetta e colore
+  eli:["Elisoccorso","--orange"], rossi:["Codici rossi","--rosso"], particolare:["Evento particolare","--aqua"],
+  complesso:["Più ambulanze","--violet"], attesa:["Attesa prolungata","--warn"], picco:["Picco","--rosso"],
+  rientro:["Rientro","--blue"], regione:["Regione","--violet"], traguardo:["Traguardo","--blue"],
 };
 
 // ======================================================== stato e utilità
@@ -380,7 +403,7 @@ async function load(){
 function renderAll(){
   if(!S.L) return;
   renderStatus(); renderZonebar(); renderTitle(); renderInsights(); renderFleet(); renderRitmo();
-  renderTiles(); renderFeed(); renderTrend(); renderHourly(); renderMotivi(); renderHeat(); renderTable();
+  renderTiles(); renderFeed(); renderTrend(); renderHourly(); renderMotivi(); renderSchede(); renderHeat(); renderTable();
 }
 function setFocus(a){
   S.focus = (S.focus === a && a !== "LOMBARDIA") ? "LOMBARDIA" : a;
@@ -552,7 +575,7 @@ function renderFleet(){
   $("mezzi").textContent = fmt(a.missioni);
   $("mezziCmp").innerHTML = sol ? `${devTxt(pct(a.missioni, sol.med))} <span style="color:var(--muted)">· di solito ~${fmt(sol.med)}</span>`
     : `<span style="color:var(--muted)">Confronto col solito disponibile dopo ~1 settimana di raccolta</span>`;
-  $("eventi").innerHTML = a.totale_missioni ? `per <b class="num">${fmt(a.totale_missioni)}</b> eventi · ${fmt(a.missioni / a.totale_missioni, 2)} mezzi per evento` : "";
+  $("eventi").innerHTML = a.totale_missioni ? `su <b class="num">${fmt(a.totale_missioni)}</b> interventi in corso · ${fmt(a.missioni / a.totale_missioni, 2)} mezzi per intervento` : "";
   const lomb = S.focus === "LOMBARDIA";
   $("fleet").innerHTML = VEH.map(([k, code, label, col]) => {
     const v = a[k] ?? null, share = a.missioni ? Math.round((v || 0) / a.missioni * 100) : null;
@@ -615,28 +638,40 @@ function renderTiles(){
 }
 
 // ======================================================== registro eventi
+const tok = s => esc(s).replace(/\[(rosso|giallo|verde|bianco)\]/g, (_, c) => `<i class="cd" style="background:var(--${c})"></i>${c}`);
+function schedeTxt(n){ return n == null ? "" : n > 1 ? `${n} nuove schede` : n === 1 ? "1 nuova scheda" : n === 0 ? "nessuna nuova scheda" : "correzione del conteggio"; }
 function renderFeed(){
   const all = S.feed?.eventi || [];
-  const ev = all.filter(e => S.focus === "LOMBARDIA" || e.aat === S.focus);
-  const list = S.feedMode === "top" ? ev.filter(e => e.tag.some(t => (TAGS[t]?.[2] || 0) >= 2)) : ev;
+  const top = S.feedMode === "top";
+  const ev = all.filter(e => (S.focus === "LOMBARDIA" || e.aat === S.focus) && e.k === (top ? "r" : "u"));
   const dove = S.focus === "LOMBARDIA" ? "in Lombardia" : `a ${NICE(S.focus)}`;
-  if(!list.length){
+  $("feedHelp").textContent = top
+    ? "Solo le segnalazioni: elisoccorso, raffiche di codici rossi, eventi particolari, picchi, più ambulanze sulla stessa scena, schede senza mezzo da oltre 30 minuti."
+    : "Ogni ~10 minuti, per ogni zona: schede nuove, mezzi partiti con codice e motivo quando ricostruibili, schede chiuse senza invio o in attesa, rientri.";
+  const present = [...new Set(ev.map(e => e.cat))];
+  $("feedLeg").innerHTML = top && present.length ? Object.entries(CAT).filter(([k]) => present.includes(k)).map(([, [l, c]]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("") : "";
+  if(!ev.length){
     let msg;
-    if(!all.length) msg = "Il registro si riempie confrontando due letture consecutive (a meno di 40 minuti l'una dall'altra).";
-    else if(S.feedMode === "top" && ev.length) msg = `Nessun evento rilevante ${dove} nelle ultime 24 ore (picchi, elisoccorso, montagna, acqua, raffiche di codici rossi). <a href="#" id="feedAll" style="color:var(--text)">Mostra tutte le uscite</a>.`;
-    else msg = `Nessuna nuova uscita registrata ${dove} tra le letture delle ultime 24 ore.`;
+    if(!all.length) msg = "Il registro si riempie confrontando due letture consecutive.";
+    else if(top) msg = `Nessuna segnalazione ${dove} nelle ultime 24 ore. <a href="#" id="feedAll" style="color:var(--text)">Mostra il registro completo</a>.`;
+    else msg = `Nessuna nuova scheda o uscita registrata ${dove} nelle ultime 24 ore.`;
     $("feed").innerHTML = `<div class="empty-note">${msg}</div>`;
     const a = $("feedAll"); if(a) a.onclick = ev2 => { ev2.preventDefault(); document.querySelector('#feedMode button[data-v="all"]').click(); };
     return;
   }
-  let lastDay = "";
-  $("feed").innerHTML = list.slice(0, 120).map(e => {
-    const top = e.tag.slice().sort((a,b) => (TAGS[b]?.[2]||0) - (TAGS[a]?.[2]||0))[0];
-    const col = TAGS[top]?.[1] || "--muted";
-    const dd = e.t.slice(0,10); let sep = "";
-    if(dd !== lastDay){ sep = lastDay ? `<div class="fi" style="grid-template-columns:1fr;padding:6px 0"><span class="zz" style="color:var(--muted)">${dayShort(e.t)}</span></div>` : ""; lastDay = dd; }
-    return sep + `<div class="fi"><span class="tm">${hhmm(e.t)}</span><span class="mk" style="background:var(${col})${top === "rientro" ? ";background:transparent;border:2px solid var(--blue)" : ""}"></span>
-      <div><div class="zz">${e.aat === "LOMBARDIA" ? "Lombardia · tutta la regione" : NICE(e.aat)}${e.tag.map(t => TAGS[t] && TAGS[t][2] >= 2 ? ` · <span style="color:var(${TAGS[t][1]})">${TAGS[t][0]}</span>` : "").join("")}</div><div class="tx">${esc(e.testo)}</div></div></div>`;
+  let lastDay = ev[0].t.slice(0,10);
+  const zona = e => e.aat === "LOMBARDIA" ? "Lombardia" : NICE(e.aat);
+  $("feed").innerHTML = ev.slice(0, top ? 200 : 240).map(e => {
+    let sep = "";
+    if(e.t.slice(0,10) !== lastDay){ lastDay = e.t.slice(0,10); sep = `<div class="dsep">${dayShort(e.t)}</div>`; }
+    if(e.k === "r"){
+      const [l, c] = CAT[e.cat] || [e.cat, "--muted"];
+      return sep + `<div class="fi"><span class="tm">${hhmm(e.t)}</span><span class="br" style="background:var(${c})"></span>
+        <div><div class="zz"><span style="color:var(${c})">${esc(l)}</span> · ${esc(zona(e))}</div><div class="fh">${tok(e.tit)}</div>${e.det ? `<div class="fd">${tok(e.det)}</div>` : ""}</div></div>`;
+    }
+    const rows = (e.righe || []).map(([l, t]) => `<div class="rw${l === "Esito" ? " es" : ""}"><span class="l">${esc(l)}</span><span>${tok(t)}</span></div>`).join("");
+    return sep + `<div class="fi"><span class="tm">${hhmm(e.t)}</span><span class="br"></span>
+      <div><div class="zz">${esc(zona(e))} <span class="ns">· ${schedeTxt(e.sch)}${e.irr ? ` · letture a ${e.irr} min, dettaglio ridotto` : ""}</span></div>${rows}</div></div>`;
   }).join("");
 }
 document.querySelectorAll("#feedMode button").forEach(b => b.onclick = () => {
@@ -723,7 +758,7 @@ function renderHourly(){
     <div><div class="v" style="color:var(--text-2)">${fmt(b)}</div><div class="l">ieri alla stessa ora</div></div>
     <div><div class="v">${b ? `<span class="${devClass(pct(a,b)) === "up" ? "delta-up" : devClass(pct(a,b)) === "down" ? "delta-down" : "delta-flat"}">${pct(a,b) >= 0 ? "+" : ""}${Math.round(pct(a,b))}%</span>` : "–"}</div><div class="l">differenza</div></div>
     <div><div class="v" style="color:var(--text-2)">${fmt(tot)}</div><div class="l">ieri in tutto</div></div>
-    <div><div class="v">${fmt(f.oggi?.totale_missioni)}</div><div class="l">eventi oggi</div></div>`;
+    <div><div class="v">${fmt(f.oggi?.totale_missioni)}</div><div class="l">schede aperte oggi</div></div>`;
   const wrap = $("hourly");
   if(!today.some(v => v != null) && !yest.some(v => v != null)){ wrap.innerHTML = `<div class="empty-note">Il conteggio orario richiede letture continue: compare dopo la prima ora di raccolta.</div>`; $("hourlyRead").innerHTML = ""; return; }
   const W = Math.max(320, wrap.clientWidth), H = 200, m = {l: 30, r: 8, t: 10, b: 22}, iw = W - m.l - m.r, ih = H - m.t - m.b;
@@ -755,14 +790,14 @@ function renderMotivi(){
   const o = now ? f.adesso : f.oggi, y = now ? null : f.ieri_stessa_ora;
   $("motWhen").className = now ? "when now" : "when";
   $("motWhen").innerHTML = now ? `<span class="live-dot"></span>Adesso` : "Oggi · dalle 00:00";
-  $("motHelp").textContent = now ? "Eventi in corso in questo momento, per motivo." : "Eventi per motivo da mezzanotte. Il segno chiaro indica ieri alla stessa ora.";
+  $("motHelp").textContent = now ? "Interventi in corso in questo momento, per motivo." : "Schede aperte da mezzanotte, per motivo. Il segno chiaro indica ieri alla stessa ora.";
   const has = o && MOTIVI.some(([k]) => o[k] != null);
   if(!has){ wrap.innerHTML = `<div class="empty-note">${now ? "I motivi degli eventi in corso compaiono dalla prossima lettura (entro 10 minuti)." : "Nessun dato di oggi."}</div>`; $("motiviRead").innerHTML = ""; return; }
   const data = MOTIVI.map(([k, l]) => ({k, l, a: o[k] || 0, b: y ? (y[k] || 0) : null})).filter(d => d.a > 0 || (d.b || 0) > 0).sort((p, q) => q.a - p.a).slice(0, 9);
   const W = Math.max(300, wrap.clientWidth), rowH = 22, gap = 7, lw = Math.min(170, W * .42), rw = 40, iw = W - lw - rw;
   const H = data.length * (rowH + gap);
   const max = Math.max(1, ...data.map(d => Math.max(d.a, d.b || 0)));
-  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Eventi per motivo, oggi e ieri alla stessa ora">`;
+  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Schede per motivo">`;
   data.forEach((d, i) => {
     const yy = i * (rowH + gap), w = Math.max(2, d.a / max * iw);
     s += `<text x="0" y="${yy + rowH/2 + 4}" style="fill:var(--text-2)">${esc(d.l)}</text>`;
@@ -774,9 +809,62 @@ function renderMotivi(){
   s += `</svg>`;
   wrap.innerHTML = s;
   const tot = data.reduce((p, d) => p + d.a, 0) || 1;
-  const read = d => now ? `<span class="when2">${esc(d.l)}</span><span>In corso adesso <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}% degli eventi)</span>${f.oggi ? `<span>Oggi in tutto <b>${fmt(f.oggi[d.k])}</b></span>` : ""}` : `<span class="when2">${esc(d.l)}</span><span>Oggi <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}%)</span><span>Ieri a quest'ora <b>${fmt(d.b)}</b></span>${d.b ? `<span class="${devClass(pct(d.a, d.b)) === "up" ? "delta-up" : devClass(pct(d.a, d.b)) === "down" ? "delta-down" : "delta-flat"}">${pct(d.a,d.b) >= 0 ? "+" : ""}${Math.round(pct(d.a,d.b))}%</span>` : ""}`;
+  const read = d => now ? `<span class="when2">${esc(d.l)}</span><span>In corso adesso <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}% degli interventi in corso)</span>${f.oggi ? `<span>Oggi in tutto <b>${fmt(f.oggi[d.k])}</b></span>` : ""}` : `<span class="when2">${esc(d.l)}</span><span>Oggi <b>${fmt(d.a)}</b> (${Math.round(d.a/tot*100)}%)</span><span>Ieri a quest'ora <b>${fmt(d.b)}</b></span>${d.b ? `<span class="${devClass(pct(d.a, d.b)) === "up" ? "delta-up" : devClass(pct(d.a, d.b)) === "down" ? "delta-down" : "delta-flat"}">${pct(d.a,d.b) >= 0 ? "+" : ""}${Math.round(pct(d.a,d.b))}%</span>` : ""}`;
   $("motiviRead").innerHTML = data.length ? read(data[0]) : "";
   wrap.querySelectorAll(".mh").forEach(r => { const d = data[+r.dataset.i]; r.addEventListener("pointerenter", () => $("motiviRead").innerHTML = read(d)); r.addEventListener("pointerdown", () => $("motiviRead").innerHTML = read(d)); });
+}
+
+// ======================================================== schede e centrale
+function renderSchede(){
+  const f = F(), b = f.schede;
+  if(!b){
+    $("schKv").innerHTML = `<div class="empty-note">Il bilancio delle schede di oggi compare dopo le prime letture della giornata.</div>`;
+    $("schOre").innerHTML = ""; $("schRead").innerHTML = ""; $("schTab").innerHTML = ""; return;
+  }
+  const p = (n, d) => d ? Math.round(n / d * 100) : null;
+  $("schKv").innerHTML = `
+    <div><div class="v">${fmt(b.schede)}</div><div class="l">schede aperte oggi</div></div>
+    <div><div class="v">${fmt(b.con_mezzo)}</div><div class="l">con un mezzo inviato</div><div class="s">${p(b.con_mezzo, b.schede) ?? "–"}% delle schede</div></div>
+    <div><div class="v" style="color:var(--orange)">${fmt(b.senza_invio)}</div><div class="l">chiuse senza invio (stima)</div><div class="s">${p(b.senza_invio, b.schede) ?? "–"}% · ${fmt(b.senza_rilevate)} viste chiudersi</div></div>
+    <div><div class="v">${fmt(b.in_attesa)}</div><div class="l">in attesa del mezzo adesso</div><div class="s">${b.attesa_30 ? `${b.attesa_30} da oltre 30 min` : "nessuna da oltre 30 min"}</div></div>
+    <div><div class="v">${fmt(b.msb_extra)}</div><div class="l">MSB senza scheda nuova</div><div class="s">rinforzi su interventi già aperti</div></div>`;
+  // grafico: schede per ora, divise in con mezzo / chiuse senza invio
+  const ore = b.ore || [], wrap = $("schOre");
+  const rows = ore.map((v, h) => v ? {h, tot: v[0], senza: Math.min(v[1], v[0]), con: Math.max(0, v[0] - v[1])} : null);
+  if(!rows.some(r => r && r.tot)){ wrap.innerHTML = `<div class="empty-note">Il grafico orario si riempie durante la giornata.</div>`; $("schRead").innerHTML = ""; }
+  else {
+    const W = Math.max(300, wrap.clientWidth), H = 190, m = {l: 30, r: 6, t: 8, b: 22}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const yMax = Math.max(4, ...rows.map(r => r ? r.tot : 0)) * 1.1, bw = iw / 24, y = v => m.t + ih - v / yMax * ih;
+    const cur = rows.reduce((a, r, h) => r ? h : a, -1);
+    let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Schede per ora: con mezzo e chiuse senza invio">`;
+    for(const v of niceTicks(yMax, 4)) s += `<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l-5}" y="${y(v)+4}" text-anchor="end">${v}</text>`;
+    rows.forEach(r => {
+      if(!r || !r.tot) return;
+      const x = m.l + r.h * bw + 1, w = Math.max(1, bw - 2), op = r.h === cur ? ' fill-opacity=".5"' : "";
+      const yc = y(r.con), hc = y(0) - yc;
+      s += `<rect x="${x}" y="${yc}" width="${w}" height="${Math.max(0, hc)}" rx="2" fill="var(--blue)"${op}/>`;
+      if(r.senza){ const ys = y(r.con + r.senza), hs = yc - ys - 2; if(hs > 0) s += `<rect x="${x}" y="${ys}" width="${w}" height="${hs}" rx="2" fill="var(--orange)"${op}/>`; }
+    });
+    for(let h = 0; h < 24; h += (W < 600 ? 6 : 3)) s += `<text x="${m.l + h*bw + bw/2}" y="${H-5}" text-anchor="middle">${String(h).padStart(2,"0")}</text>`;
+    for(let h = 0; h < 24; h++) s += `<rect class="sb" data-h="${h}" x="${m.l + h*bw}" y="${m.t}" width="${bw}" height="${ih}" fill="transparent"/>`;
+    wrap.innerHTML = s + `</svg><div class="legend"><span><i class="sw" style="background:var(--blue)"></i>con mezzo o ancora in attesa</span><span><i class="sw" style="background:var(--orange)"></i>chiuse senza invio (stima)</span><span style="color:var(--muted)">ora in corso più chiara: parziale</span></div>`;
+    const read = h => { const r = rows[h]; return r ? `<span class="when2">ore ${String(h).padStart(2,"0")}–${String((h+1)%24).padStart(2,"0")}</span><span>Schede <b>${fmt(r.tot)}</b></span><span><i class="sw" style="background:var(--blue)"></i>Con mezzo <b>${fmt(r.con)}</b></span><span><i class="sw" style="background:var(--orange)"></i>Senza invio <b>${fmt(r.senza)}</b>${r.tot ? ` (${Math.round(r.senza / r.tot * 100)}%)` : ""}</span>` : `<span class="when2">ore ${String(h).padStart(2,"0")}–${String((h+1)%24).padStart(2,"0")}</span><span>nessun dato</span>`; };
+    const def = Math.max(0, cur - 1);
+    $("schRead").innerHTML = read(def);
+    wrap.querySelectorAll(".sb").forEach(r => { const h = +r.dataset.h; r.addEventListener("pointerenter", () => $("schRead").innerHTML = read(h)); r.addEventListener("pointerdown", () => $("schRead").innerHTML = read(h)); });
+    wrap.querySelector("svg").addEventListener("pointerleave", () => $("schRead").innerHTML = read(def));
+  }
+  // tabella per zona
+  const zs = S.L.zone.filter(z => z.schede).sort((a, c) => c.schede.schede - a.schede.schede);
+  const R = S.L.regione.schede;
+  const tr = (a, x, sel, bold) => `<tr data-a="${a}" class="${sel ? "sel" : ""}"${bold ? ' style="font-weight:700"' : ""}><td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${NICE(a)}</td>${[
+      fmt(x.schede), fmt(x.con_mezzo), fmt(x.senza_invio), x.schede ? `${Math.round(x.senza_invio / x.schede * 100)}%` : "–",
+      x.attesa_30 ? `${fmt(x.in_attesa)} <span style="color:var(--muted)">(${x.attesa_30})</span>` : fmt(x.in_attesa), fmt(x.msb_extra)
+    ].map(v => `<td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${v}</td>`).join("")}</tr>`;
+  $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th>Con mezzo</th><th>Senza invio</th><th>%</th><th>In attesa</th><th>MSB in più</th></tr></thead><tbody>${
+    zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>
+    <div class="collect">Tra parentesi: in attesa da oltre 30 minuti. Le zone che aggiornano i due contatori in momenti diversi (es. Milano) hanno meno chiusure "viste" e più stime.</div>`;
+  $("schTab").querySelectorAll("tbody tr").forEach(r => r.onclick = () => { S.focus = r.dataset.a; renderAll(); window.scrollTo({top: 0, behavior: "smooth"}); });
 }
 
 // ======================================================== heatmap
