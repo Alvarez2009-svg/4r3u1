@@ -90,7 +90,7 @@ BASELINE_DAYS = 56
 SERIES_DAYS = 7
 HEATMAP_DAYS = 8
 FEED_HOURS = 24
-FEED_MAX = 900
+FEED_MAX = 2000      # voci del registro 'Tutti' (le rilevanti sono sempre tutte)
 GAP_MIN = 40          # oltre questo buco tra letture un'ora non e' calcolabile
 
 
@@ -373,50 +373,87 @@ def deduci_codici(tipi: dict, codici: dict, *, no_verde_avanzati: bool = False,
     return soluzioni[0] if len(soluzioni) == 1 else None
 
 
-def ricostruisci_codici(tipi: dict, codici: dict, *, de, fuori_prima, controllo_scorte):
-    """Applica le regole in ordine di affidabilita'. Restituisce (ricostruzione, certezza) o (None, None).
+def ricostruisci_codici(tipi: dict, codici: dict, *, fuori_prima, controllo_scorte):
+    """Codice colore per tipo di mezzo partito. Restituisce (ricostruzione, certezza) o (None, None).
 
-    certezza: "certa"     -> nessuna supposizione (un solo tipo o un solo colore, ecc.)
-              "alta"      -> regole molto probabili, confermata anche dalla versione 'debole' della coppia
-              "stimata"   -> serve la versione 'forte' della coppia, oppure i contatori non erano verificabili
-    controllo_scorte: True = superato, False = fallito (cambio di colore o rinforzo: non dedurre),
-                      None = non verificabile (contatori della zona non allineati)
+    certezza: "certa" -> nessuna supposizione (un solo tipo, un solo colore, ecc.)
+              "alta"  -> regole molto probabili: MSA1/MSA2 non partono in verde/bianco e hanno il colore
+                         di un MSB partito ora o di un mezzo gia' fuori (versione 'debole' della coppia)
+    La versione rigida della coppia (affidabile solo al 46-68%) non e' piu' usata.
+    controllo_scorte: True = superato, False = fallito (cambio di colore: non dedurre), None = non verificabile
     """
     if controllo_scorte is False:
         return None, None
     tipi = {k: v or 0 for k, v in tipi.items()}
-    n_av = sum(tipi.get(k, 0) for k in AVANZATI)
-    dm = sum(tipi.values())
-    extra = dm - de if de is not None else None
-    colori_diversi = sum(1 for v in codici.values() if v)
-    # regola 2: un solo evento nuovo ma colori diversi -> c'e' un rinforzo o un cambio di colore
-    coppia_ok = not (de is not None and de <= 1 and dm >= 2 and colori_diversi >= 2)
     rip, cert = deduci_codici(tipi, codici), "certa"
-    if not rip and n_av:
+    if not rip and sum(tipi.get(k, 0) for k in AVANZATI):
         rip, cert = deduci_codici(tipi, codici, no_verde_avanzati=True, coppia="debole",
                                   fuori_prima=fuori_prima), "alta"
-        if not rip and coppia_ok and tipi.get("msb", 0) >= n_av and extra is not None and extra >= n_av:
-            rip, cert = deduci_codici(tipi, codici, no_verde_avanzati=True, coppia="forte"), "stimata"
     if not rip:
         return None, None
-    # contatori non verificabili: un cambio di colore resterebbe invisibile (capita in ~1 intervallo
-    # su 100); non e' "certa" ma resta affidabile, quindi scende ad "alta" senza etichetta
     if controllo_scorte is None and cert == "certa":
         cert = "alta"
     return rip, cert
 
 
-def testo_codici(rip: dict) -> str:
-    """{"msb": {"giallo": 2, "verde": 1}, "msa": {"rosso": 1}} -> '2 MSB gialli, 1 MSB verde, 1 MSA2 rosso'"""
-    nomi = {"msb": "MSB", "msi": "MSA1", "msa": "MSA2", "elisoccorso": "elisoccorso", "mezzi_altro": "altro mezzo"}
-    parti = []
-    for t in ("msb", "msi", "msa", "elisoccorso", "mezzi_altro"):
-        for c, sg, pl in COLORI:
-            n = rip.get(t, {}).get(c)
-            if n:
-                nome = nomi[t] if n == 1 or t != "mezzi_altro" else "altri mezzi"
-                parti.append(f"{n} {nome} {sg if n == 1 else pl}")
-    return ", ".join(parti)
+# ============================================================ registro: testi
+TIPI_MEZZO = ("msb", "msi", "msa", "elisoccorso", "mezzi_altro")
+SIGLE = {"msb": ("MSB", "MSB"), "msi": ("MSA1", "MSA1"), "msa": ("MSA2", "MSA2"),
+         "elisoccorso": ("elisoccorso", "elisoccorsi"), "mezzi_altro": ("altro mezzo", "altri mezzi")}
+MOT_NOME = {**ORDINARI, **NOTABILI, "medico_acuto": ("malore", "malori")}
+PARTICOLARI = {"incidente_montano": "Incidente in montagna", "incidente_acqua": "Incidente in acqua",
+               "incidente_speleo": "Incidente speleo / forra", "evento_massa": "Evento di massa",
+               "calamita_naturale": "Calamità naturale", "soccorso_alpino": "Intervento con il Soccorso Alpino"}
+SCENA = ("incidente_stradale", "evento_violento", "infortunio", "incidente_montano", "incidente_acqua",
+         "incidente_speleo", "evento_massa", "calamita_naturale")
+REGOLARE_MIN = 15     # letture piu' distanti: niente dettaglio fine
+ABBINA_MIN = 30       # una scheda senza MSB e un MSB senza scheda a meno di 30' nella stessa zona: probabile stesso intervento
+SCADENZA_MIN = 60     # dopo 60' senza mezzo una scheda si considera chiusa senza invio (stima)
+ATTESA_MIN = 30       # soglia "attesa prolungata"
+ATTESA_N = 2          # quante schede senza mezzo oltre la soglia per segnalarlo (calibrato sui dati)
+COMPLESSO_EXTRA = 2   # MSB in piu' delle schede nuove in ~20' (calibrato sui dati)
+
+
+def n_nome(n: int, k: str) -> str:
+    sg, pl = MOT_NOME.get(k, (k.replace("_", " "), k.replace("_", " ")))
+    return f"{n} {sg if n == 1 else pl}"
+
+
+def testo_motivi(mot: dict) -> str:
+    return ", ".join(n_nome(v, k) for k, v in sorted(mot.items(), key=lambda kv: -kv[1]))
+
+
+def testo_mezzi(d_tipi: dict, rip: dict | None) -> str:
+    """'1 MSB [rosso] + 1 MSA2 [rosso]'  oppure  '2 MSB (1 [rosso], 1 [giallo])'  oppure  '2 MSB + 1 MSA1'.
+    I colori tra parentesi quadre vengono resi come badge dalla dashboard."""
+    pezzi = []
+    for t in TIPI_MEZZO:
+        n = d_tipi.get(t) or 0
+        if n <= 0:
+            continue
+        nome = SIGLE[t][0 if n == 1 else 1]
+        cols = [(c, rip[t][c]) for c, _, _ in COLORI if rip and rip.get(t, {}).get(c)]
+        if len(cols) == 1:
+            pezzi.append(f"{n} {nome} [{cols[0][0]}]")
+        elif cols:
+            pezzi.append(f"{n} {nome} (" + ", ".join(f"{v} [{c}]" for c, v in cols) + ")")
+        else:
+            pezzi.append(f"{n} {nome}")
+    return " + ".join(pezzi)
+
+
+def testo_colori(d_cod: dict) -> str:
+    return ", ".join(f"{d_cod[c]} [{c}]" for c, _, _ in COLORI if (d_cod.get(c) or 0) > 0)
+
+
+def plur(n: int, sg: str, pl: str) -> str:
+    return f"{n} {sg if n == 1 else pl}"
+
+
+def coda_binomiale(k: int, n: int, p: float) -> float:
+    """P(X >= k) per X ~ Binomiale(n, p)."""
+    import math
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k, n + 1))
 
 
 def poisson_coda(k: int, lam: float) -> float:
@@ -593,19 +630,35 @@ def build(now: datetime, finals: dict) -> dict:
         "zone": {a: [hourly_cache.get((a, d), [None] * 24) for d in hdays] for a in C.aats},
     }
 
-    # ---------------- feed degli eventi
+    # ---------------- registro eventi e bilancio schede / mezzi
+    # Le "schede" (eventi) sono contate quando la centrale apre la scheda, i mezzi quando partono.
+    # Confrontando ogni lettura con la precedente si separano: schede con mezzo, schede chiuse senza
+    # invio (eventi chiusi senza che si liberi un mezzo), schede in attesa del mezzo, MSB partiti senza
+    # una scheda nuova (rinforzi o schede registrate dopo). Una scheda senza MSB e un MSB senza scheda
+    # nella stessa zona a meno di 60' vengono abbinati (stesso intervento, letto in due momenti).
     f_since = last - timedelta(hours=FEED_HOURS)
-    tsf = [t for t in C.ts if t >= f_since - timedelta(minutes=30)]
+    midnight_today = datetime(today.year, today.month, today.day, tzinfo=TZ)
+    start = min(f_since, midnight_today) - timedelta(minutes=ABBINA_MIN + 30)
+    tsf = [t for t in C.ts if t >= start]
     feed = []
     surge_on: dict[str, bool] = {}
+    surge_prev: dict[str, str | None] = {}
+    hh = lambda t: t.strftime("%H:%M")
 
     def surge_state(a, t, v):
         b = solito("in_corso", a, t)
-        if not b or v is None:
+        if not b or v is None or b["n"] < 4:     # servono almeno 4 settimane di storico per quell'ora
             return None, b
-        above = v > b["p90"] and v - b["med"] >= max(4, 0.3 * b["med"])
+        # "sopra il solito" in modo netto: oltre i picchi abituali di almeno 2 mezzi (o 15%) e almeno
+        # 5 mezzi (o 40%) sopra la mediana, cosi' le oscillazioni casuali delle zone piccole non contano
+        above = v >= b["p90"] + max(2, 0.15 * b["med"]) and v - b["med"] >= max(5, 0.4 * b["med"])
         back = v <= b["med"] * 1.1
         return ("su" if above else "giu" if back else "mezzo"), b
+
+    def rel(t, a, cat, tit, det=""):
+        if t > f_since:
+            feed.append({"t": t.isoformat(timespec="minutes"), "aat": a, "k": "r",
+                         "cat": cat, "tit": tit, "det": det})
 
     # --- dati per i traguardi: totali completi dei giorni passati (giornaliero.csv)
     past_days = sorted({d for (d, _a) in finals if d < today.isoformat()}, reverse=True)[:28]
@@ -627,163 +680,320 @@ def build(now: datetime, finals: dict) -> dict:
     TREND = {"incidente_stradale": "incidenti stradali", "caduta": "cadute",
              "intossicazione": "intossicazioni", "evento_violento": "eventi violenti"}
 
-    def add(t, a, tags, parts):
-        if parts and t > f_since:
-            feed.append({"t": t.isoformat(timespec="minutes"), "aat": a, "tag": tags, "testo": " · ".join(parts)})
+    # --- stato del bilancio per zona
+    pend: dict[str, list] = defaultdict(list)    # schede senza MSB, in attesa di chiarimento
+    extra: dict[str, list] = defaultdict(list)   # MSB partiti senza una scheda nuova
+    conti: dict[tuple, dict] = defaultdict(lambda: defaultdict(int))     # (zona, giorno) -> contatori
+    ore: dict[tuple, list] = defaultdict(lambda: [[0, 0] for _ in range(24)])  # [schede, senza invio]
+    storia: dict[str, list] = defaultdict(list)  # ultimi intervalli per "intervento complesso"
+    ultimo_avviso: dict[tuple, datetime] = {}
+
+    def esito(u, txt, chi=("scheda", "schede")):
+        e = u.get("e")
+        if e is not None:
+            es = e.setdefault("_es", {})
+            es[(chi, txt)] = es.get((chi, txt), 0) + 1
+
+    def chiudi(a, u, tipo, txt):
+        conti[(a, u["day"])][tipo] += 1
+        if tipo in ("senza_invio", "scaduta"):
+            ore[(a, u["day"])][u["h"]][1] += 1
+        esito(u, txt)
+
+    def flusso(a, t0, t1):
+        o0, o1 = ogg.get(t0, {}).get(a), ogg.get(t1, {}).get(a)
+        i0, i1 = inc.get(t0, {}).get(a), inc.get(t1, {}).get(a)
+        if not o0 or not o1 or not o1.get("day") or not o0.get("day") or o1["day"] < o0["day"]:
+            return None
+        stesso = o0["day"] == o1["day"]
+
+        def dd(k):
+            if o1.get(k) is None:
+                return None
+            if not stesso:
+                return o1[k]          # nuovo giorno: conta solo la parte dopo mezzanotte
+            return None if o0.get(k) is None else o1[k] - o0[k]
+        f = {"o0": o0, "o1": o1, "i0": i0, "i1": i1, "stesso": stesso,
+             "de": dd("totale_missioni"), "dm": dd("missioni"),
+             "tipi": {k: dd(k) for k in TIPI_MEZZO}, "cod": {c: dd(c) for c, _, _ in COLORI},
+             "mot": {k: dd(k) for k in MOTIVI + ["soccorso_alpino"]}}
+        if f["de"] is None or f["dm"] is None or any(v is None for v in f["tipi"].values()):
+            return None
+        f["allineati"] = bool(stesso and i0 and i1 and i0.get("agg") == o0.get("agg")
+                              and i1.get("agg") == o1.get("agg")
+                              and None not in (i0.get("missioni"), i1.get("missioni"),
+                                               i0.get("totale_missioni"), i1.get("totale_missioni")))
+        f["rientri"] = f["dm"] - (i1["missioni"] - i0["missioni"]) if f["allineati"] else None
+        f["chiusi"] = f["de"] - (i1["totale_missioni"] - i0["totale_missioni"]) if f["allineati"] else None
+        return f
 
     for t0, t1 in zip(tsf, tsf[1:]):
-        if (t1 - t0).total_seconds() / 60 > GAP_MIN:
-            continue
-        for a in C.aats + ["LOMBARDIA"]:
-            if a == "LOMBARDIA":
-                v = sum((d.get("missioni") or 0) for d in inc.get(t1, {}).values()) if t1 in inc else None
-                st, b = surge_state("REGIONE", t1, v)
-            else:
-                i1 = inc.get(t1, {}).get(a) or {}
-                i0 = inc.get(t0, {}).get(a) or {}
-                v = i1.get("missioni")
-                st, b = surge_state(a, t1, v)
-            tags, parts = [], []
-            prev = surge_on.get(a, False)
-            if st == "su" and not prev:
-                surge_on[a] = True
-                tags.append("picco")
-                parts.append(f"mezzi in uscita sopra il solito: {v} (di solito {b['med']:g})")
-            elif st == "giu" and prev:
-                surge_on[a] = False
-                tags.append("rientro")
-                parts.append(f"situazione rientrata: {v} mezzi in uscita (di solito {b['med']:g})")
-            if a != "LOMBARDIA" and t1 > f_since:
-                o0, o1 = ogg.get(t0, {}).get(a) or {}, ogg.get(t1, {}).get(a) or {}
-                dm = C.delta(a, t0, t1, "missioni")
-                dr = C.delta(a, t0, t1, "rosso")
-                de = C.delta(a, t0, t1, "totale_missioni")
-                # tipi di mezzo partiti tra le due letture (nomi ufficiali AREU)
-                tipi = []
-                for k, sigla in (("msb", "MSB"), ("msi", "MSA1"), ("msa", "MSA2"), ("elisoccorso", "elisoccorso"),
-                                 ("mezzi_altro", "altro mezzo")):
-                    d = C.delta(a, t0, t1, k)
-                    if d:
-                        tipi.append((d, sigla))
-                d_eli = C.delta(a, t0, t1, "elisoccorso") or 0
-                if d_eli or ((i1.get("elisoccorso") or 0) > (i0.get("elisoccorso") or 0) and i0):
-                    tags.append("eli")
-                    if not d_eli:
-                        parts.append("elisoccorso in volo")
-                motivi_txt = []
-                for k, (sg, pl) in NOTABILI.items():
-                    d = C.delta(a, t0, t1, k)
-                    if d:
-                        tags.append(k)
-                        motivi_txt.append(f"{d} {sg if d == 1 else pl}")
-                for k, (sg, pl) in ORDINARI.items():
-                    d = C.delta(a, t0, t1, k)
-                    if d:
-                        motivi_txt.append(f"{d} {sg if d == 1 else pl}")
-                raffica = dr is not None and dm and dr >= 3 and dr / dm >= 0.5
-                if dr and (raffica or tags):
-                    tags.insert(0, "rosso")
-                # intervento complesso: molti piu' mezzi che eventi nuovi, con mezzi avanzati
-                avanz = sum(C.delta(a, t0, t1, k) or 0 for k in ("msa", "msi", "elisoccorso"))
-                extra = (dm or 0) - (de or 0) if de is not None else None
-                complesso = extra is not None and extra >= 3 and extra >= 0.5 * max(de, 1) and avanz >= 2
-                head = []
-                elenco = ", ".join(f"{d} {sg}" for d, sg in tipi)
-                if dm and len(tipi) == 1 and tipi[0][0] == dm:
-                    sg = tipi[0][1].replace("altro mezzo", "altri mezzi" if dm > 1 else "altro mezzo")
-                    head.append(f"{dm} {sg} {'inviato' if dm == 1 else 'inviati'}")
-                elif dm:
-                    head.append(f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}"
-                                + (f" ({elenco})" if tipi else ""))
-                elif tipi:
-                    head.append(elenco + " inviati")
-                # codici colore per tipo di mezzo: solo se la ricostruzione e' univoca
-                rip = cert = None
-                if dm:
-                    TIPI = ("msb", "msi", "msa", "elisoccorso", "mezzi_altro")
-                    d_tipi = {k: C.delta(a, t0, t1, k) for k in TIPI}
-                    d_cod = {c: C.delta(a, t0, t1, c) for c, _, _ in COLORI}
-                    if all(v is not None for v in d_tipi.values()) and all(v is not None for v in d_cod.values()):
-                        allineati = (i0 and i1 and o0 and o1 and o0.get("day") == o1.get("day")
-                                     and i0.get("agg") == o0.get("agg") and i1.get("agg") == o1.get("agg"))
-                        # regola 1: per ogni colore e tipo i rientrati (partiti - variazione in corso)
-                        # non possono essere negativi; se lo sono c'e' stato un cambio di colore
-                        controllo = None
-                        if allineati:
-                            controllo = True
-                            for k, dk in list(d_cod.items()) + list(d_tipi.items()):
-                                if i0.get(k) is None or i1.get(k) is None:
-                                    controllo = None
-                                    break
-                                if dk - (i1[k] - i0[k]) < 0:
-                                    controllo = False
-                                    break
-                        fuori_prima = {c: (i0.get(c) or 0) for c, _, _ in COLORI} if i0 else {}
-                        rip, cert = ricostruisci_codici(d_tipi, d_cod, de=de, fuori_prima=fuori_prima,
-                                                        controllo_scorte=controllo)
-                if rip:
-                    head = [f"{dm} {'mezzo inviato' if dm == 1 else 'mezzi inviati'}: {testo_codici(rip)}"
-                            + (" (codici stimati)" if cert == "stimata" else "")]
-                elif dr:
-                    head.append(f"{dr} {'codice rosso' if dr == 1 else 'codici rossi'}")
-                # rientri = partenze - variazione dei mezzi in corso; solo se i due contatori
-                # della zona sono allineati (stesso orario di aggiornamento) e il conto torna
-                if (dm is not None and i0 and i1 and o0 and o1 and o0.get("day") == o1.get("day")
-                        and i0.get("agg") == o0.get("agg") and i1.get("agg") == o1.get("agg")
-                        and i0.get("missioni") is not None and i1.get("missioni") is not None):
-                    rient = dm - (i1["missioni"] - i0["missioni"])
-                    if rient > 0:
-                        head.append(f"{rient} {'mezzo rientrato' if rient == 1 else 'mezzi rientrati'}")
-                parts = head + parts + motivi_txt
-                if complesso:
-                    tags.insert(0, "complesso")
-                    parts.append(f"probabile intervento complesso o rinforzi: {dm} mezzi per {de} "
-                                 f"{'nuovo evento' if de == 1 else 'nuovi eventi'}, {avanz} "
-                                 f"{'mezzo avanzato' if avanz == 1 else 'mezzi avanzati'}")
-                if parts and not tags:
-                    tags.append("routine")
-            add(t1, a, tags, parts)
+        gap = (t1 - t0).total_seconds() / 60
+        regolare = gap <= REGOLARE_MIN
+        vicino = gap <= GAP_MIN
+
+        # --- picco / rientro per zona e per regione
+        if vicino:
+            for a in C.aats + ["LOMBARDIA"]:
+                if a == "LOMBARDIA":
+                    v = sum((d.get("missioni") or 0) for d in inc.get(t1, {}).values()) if t1 in inc else None
+                    stt, b = surge_state("REGIONE", t1, v)
+                else:
+                    v = (inc.get(t1, {}).get(a) or {}).get("missioni")
+                    stt, b = surge_state(a, t1, v)
+                # il picco va confermato da due letture consecutive e non si ripete entro 90 minuti
+                prima_su = surge_prev.get(a) == "su"
+                surge_prev[a] = stt
+                if (stt == "su" and prima_su and not surge_on.get(a)
+                        and t1 - ultimo_avviso.get(("picco", a), datetime.min.replace(tzinfo=TZ)) > timedelta(minutes=90)):
+                    surge_on[a] = True
+                    ultimo_avviso[("picco", a)] = t1
+                    rel(t1, a, "picco", f"Mezzi fuori sopra il solito: {v}",
+                        f"di solito a quest'ora circa {b['med']:g}, picchi abituali fino a {b['p90']:g}")
+                elif stt == "giu" and surge_on.get(a):
+                    surge_on[a] = False
+                    rel(t1, a, "rientro", f"Situazione rientrata: {v} mezzi fuori",
+                        f"di solito a quest'ora circa {b['med']:g}")
+
+        for a in C.aats:
+            # --- scadenze degli abbinamenti
+            for u in [u for u in pend[a] if t1 - u["t"] > timedelta(minutes=SCADENZA_MIN)]:
+                pend[a].remove(u)
+                chiudi(a, u, "scaduta", "nessun mezzo entro 60 minuti (probabile chiusura senza invio)")
+            for u in [u for u in extra[a] if t1 - u["t"] > timedelta(minutes=ABBINA_MIN)]:
+                extra[a].remove(u)
+                conti[(a, u["day"])]["rinforzo"] += 1
+
+            f = flusso(a, t0, t1)
+            if f is None:
+                continue
+            day, h = f["o1"]["day"], t1.hour
+            de, dm, tp, cod, mot = f["de"], f["dm"], f["tipi"], f["cod"], f["mot"]
+            i0, i1 = f["i0"], f["i1"]
+            de_c, dB = max(de, 0), max(tp["msb"], 0)
+            adv = sum(max(tp[k], 0) for k in ("msi", "msa", "elisoccorso"))
+            ore[(a, day)][h][0] += de_c
+            pos = {k: v for k, v in mot.items() if k in MOTIVI and v and v > 0}
+            neg = {k: -v for k, v in mot.items() if k in MOTIVI and v and v < 0}
+            entry = {"t": t1.isoformat(timespec="minutes"), "aat": a, "k": "u", "sch": de, "righe": []}
+            if not regolare:
+                entry["irr"] = round(gap)
+            con_motivo = len(pos) == 1 and not neg and sum(pos.values()) == de_c and de_c >= 1
+            mot_unico = next(iter(pos)) if con_motivo else None
+
+            # --- bilancio schede / MSB
+            sch_txt = []
+            x = de_c - dB
+            surplus = (f["chiusi"] - f["rientri"]) if (regolare and f["allineati"]) else 0
+            if x > 0:
+                resto = x
+                prima = []
+                while resto and extra[a]:
+                    ex = extra[a].pop(0)
+                    if t1 - ex["t"] > timedelta(minutes=ABBINA_MIN):
+                        conti[(a, ex["day"])]["rinforzo"] += 1
+                        continue
+                    conti[(a, ex["day"])]["scheda_dopo"] += 1
+                    esito(ex, f"probabile scheda registrata alle {hh(t1)}", ("MSB", "MSB"))
+                    prima.append(hh(ex["t"])); resto -= 1
+                if prima:
+                    chi = "l'MSB partito" if len(prima) == 1 else "gli MSB partiti"
+                    sch_txt.append(f"{plur(len(prima), 'scheda', 'schede')} probabilmente per {chi} "
+                                   f"alle {', '.join(sorted(set(prima)))}")
+                s = min(resto, max(0, surplus))
+                surplus -= s
+                if s:
+                    conti[(a, day)]["senza_invio"] += s
+                    ore[(a, day)][h][1] += s
+                    sch_txt.append(f"{plur(s, 'chiusa', 'chiuse')} senza invio"
+                                   + (f" ({n_nome(s, mot_unico).split(' ', 1)[1]})" if mot_unico and dB == 0 else ""))
+                    resto -= s
+                for _ in range(resto):
+                    pend[a].append({"t": t1, "e": entry, "day": day, "h": h, "verif": bool(regolare and f["allineati"])})
+                if resto:
+                    sch_txt.append(f"{resto} in attesa del mezzo")
+            nuovi_extra = 0
+            if x < 0:
+                k, quando = -x, []
+                while k and pend[a]:
+                    u = pend[a][0]
+                    if t1 - u["t"] > timedelta(minutes=ABBINA_MIN):
+                        break
+                    pend[a].pop(0)
+                    chiudi(a, u, "in_ritardo", f"probabile MSB partito alle {hh(t1)}")
+                    quando.append(hh(u["t"])); k -= 1
+                if quando:
+                    sch_txt.append(f"{len(quando)} MSB probabilmente per {'la scheda' if len(quando) == 1 else 'le schede'} "
+                                   f"delle {', '.join(sorted(set(quando)))}")
+                nuovi_extra = k
+                for _ in range(k):
+                    extra[a].append({"t": t1, "e": entry, "day": day})
+                if k:
+                    sch_txt.append(f"{k} MSB su intervento già aperto")
+            # eventi chiusi senza liberare mezzi: schede in attesa che si chiudono senza invio
+            nuove = [u for u in pend[a] if u["t"] < t1]
+            while surplus > 0 and nuove:
+                u = nuove.pop(0); pend[a].remove(u); surplus -= 1
+                chiudi(a, u, "senza_invio", f"chiusa senza invio alle {hh(t1)}")
+            if de < 0:
+                sch_txt.append(f"correzione del conteggio: {de} {'scheda' if de == -1 else 'schede'}")
+
+            # --- dettaglio dei mezzi partiti
+            rip = None
+            if dm > 0 and regolare:
+                controllo = None
+                if f["allineati"]:
+                    controllo = True
+                    for kk, dk in list(cod.items()) + list(tp.items()):
+                        if dk is None or i0.get(kk) is None or i1.get(kk) is None:
+                            controllo = None
+                            break
+                        if dk - (i1[kk] - i0[kk]) < 0:
+                            controllo = False
+                            break
+                if all(v is not None for v in cod.values()):
+                    fuori_prima = {c: (i0.get(c) or 0) for c, _, _ in COLORI} if i0 else {}
+                    rip, _cert = ricostruisci_codici({k: max(v, 0) for k, v in tp.items()},
+                                                     {c: max(v, 0) for c, v in cod.items()},
+                                                     fuori_prima=fuori_prima, controllo_scorte=controllo)
+            linea = testo_mezzi(tp, rip)
+            legato = con_motivo and 1 <= dB <= de_c
+            if linea:
+                if legato:
+                    linea += " · " + testo_motivi(pos)
+                elif dB == 0 and de_c == 0 and adv:
+                    linea += " · su intervento già in corso"
+                entry["righe"].append(["Mezzi", linea])
+                if not rip and dm > 0:
+                    tc = testo_colori(cod)
+                    if tc:
+                        entry["righe"].append(["Codici", tc])
+            if sch_txt:
+                entry["righe"].append(["Schede", " · ".join(sch_txt)])
+            if pos and not legato:
+                entry["righe"].append(["Motivi", testo_motivi(pos)])
+            if neg:
+                entry["righe"].append(["Riclassif.", "motivo aggiornato per " + ", ".join(
+                    f"{v} {'scheda' if v == 1 else 'schede'} prima registrat{'a' if v == 1 else 'e'} come "
+                    f"{MOT_NOME.get(k, (k,))[0]}" for k, v in neg.items())])
+            if f["allineati"] and all(cod.get(c) is not None and i0.get(c) is not None and i1.get(c) is not None
+                                      for c, _, _ in COLORI):
+                su = {c: -(cod[c] - (i1[c] - i0[c])) for c, _, _ in COLORI if cod[c] - (i1[c] - i0[c]) < 0}
+                if su:
+                    entry["righe"].append(["Riclassif.", ", ".join(
+                        f"{n} {'mezzo passato' if n == 1 else 'mezzi passati'} a [{c}]" for c, n in su.items())])
+            if f["rientri"] and f["rientri"] > 0:
+                entry["righe"].append(["Rientri", plur(f["rientri"], "mezzo", "mezzi")])
+            if (de or dm or neg) and t1 > f_since:
+                feed.append(entry)
+
+            if not vicino or t1 <= f_since:
+                continue
+            # --- segnalazioni rilevanti di questo intervallo
+            segnali = []
+            if tp["elisoccorso"] > 0:
+                tit = "Elisoccorso inviato" if tp["elisoccorso"] == 1 else f"{tp['elisoccorso']} elisoccorsi inviati"
+                ce = [c for c, _, _ in COLORI if rip and rip.get("elisoccorso", {}).get(c)]
+                if len(ce) == 1:
+                    tit += f" in codice [{ce[0]}]"
+                segnali.append((5, "eli", tit))
+            elif i0 and i1 and (i1.get("elisoccorso") or 0) > (i0.get("elisoccorso") or 0):
+                segnali.append((4, "eli", "Elisoccorso in volo per la zona"))
+            for k, nome in PARTICOLARI.items():
+                v = mot.get(k) or 0
+                if v > 0:
+                    segnali.append((4, "particolare", nome if v == 1 else n_nome(v, k).capitalize()))
+            dr = cod.get("rosso") or 0
+            o1 = f["o1"]
+            quota = (o1.get("rosso") or 0) / o1["missioni"] if o1.get("missioni") else 0.15
+            quota = min(max(quota, 0.08), 0.5)
+            # raffica: almeno 3 rossi e improbabili per caso dato il solito tasso di rossi della zona (p < 1%)
+            if regolare and dr >= 3 and dm and coda_binomiale(dr, dm, quota) < 0.01:
+                segnali.append((3, "rossi", f"{dr} mezzi in codice rosso in {round(gap)} minuti"))
+            if segnali:
+                segnali.sort(key=lambda s: -s[0])
+                det = [s[2] for s in segnali[1:]]
+                if linea:
+                    det.append(linea)
+                if pos and not legato:
+                    det.append(testo_motivi(pos))
+                rel(t1, a, segnali[0][1], segnali[0][2], " · ".join(det))
+
+            # --- intervento complesso: in ~20 minuti partono almeno 2 MSB senza una scheda nuova e non
+            # spiegati da schede in attesa (di norma le schede superano gli MSB del 5-7%), con almeno un
+            # mezzo avanzato e un motivo "di scena" (strada, violenza, infortunio, montagna...): piu'
+            # ambulanze sullo stesso luogo
+            storia[a] = [s_ for s_ in storia[a] if t1 - s_["t"] <= timedelta(minutes=25)]
+            scena = sum(pos.get(k, 0) for k in SCENA) + max(mot.get("soccorso_alpino") or 0, 0)
+            storia[a].append({"t": t1, "de": de_c, "adv": adv, "msb": dB, "ex": nuovi_extra, "ok": regolare,
+                              "scena": scena, "pos": pos})
+            w = storia[a]
+            de_w, adv_w = sum(s_["de"] for s_ in w), sum(s_["adv"] for s_ in w)
+            ex_w = sum(s_["ex"] for s_ in w)   # MSB senza scheda nuova e non spiegati da schede in attesa
+            scena_w = sum(s_["scena"] for s_ in w)
+            agg_mot = defaultdict(int)
+            for s_ in w:
+                for k, v in s_["pos"].items():
+                    agg_mot[k] += v
+            if (all(s_["ok"] for s_ in w) and nuovi_extra > 0 and adv_w >= 1 and scena_w >= 1
+                    and ex_w >= max(COMPLESSO_EXTRA, 0.15 * de_w)
+                    and t1 - ultimo_avviso.get(("complesso", a), datetime.min.replace(tzinfo=TZ)) > timedelta(minutes=60)):
+                ultimo_avviso[("complesso", a)] = t1
+                mins = round((t1 - w[0]["t"]).total_seconds() / 60) + 10
+                rel(t1, a, "complesso", "Probabile intervento con più ambulanze sulla stessa scena",
+                    f"{ex_w} MSB partiti senza una scheda nuova in circa {mins} minuti, "
+                    f"{plur(adv_w, 'mezzo avanzato', 'mezzi avanzati')} · "
+                    + testo_motivi({k: v for k, v in agg_mot.items() if k in SCENA}))
+
+            # --- attesa prolungata: schede senza alcun mezzo registrato da oltre 30 minuti
+            # solo schede verificate ancora aperte (lettura allineata alla comparsa): le altre potrebbero
+            # essersi gia' chiuse senza invio senza che i dati lo mostrino
+            vecchie = [u for u in pend[a] if u["verif"] and t1 - u["t"] >= timedelta(minutes=ATTESA_MIN)]
+            if (len(vecchie) >= ATTESA_N
+                    and t1 - ultimo_avviso.get(("attesa", a), datetime.min.replace(tzinfo=TZ)) > timedelta(minutes=60)):
+                ultimo_avviso[("attesa", a)] = t1
+                rel(t1, a, "attesa", f"{plur(len(vecchie), 'scheda', 'schede')} senza mezzo da oltre {ATTESA_MIN} minuti",
+                    f"aperte alle {', '.join(sorted({hh(u['t']) for u in vecchie}))} e ancora in corso alla lettura "
+                    f"successiva · nessun MSB partito finora nella zona")
 
         # --- tendenze regionali: lo stesso motivo in piu' zone nella stessa mezz'ora
         tw = C.near(t1 - timedelta(minutes=30), 8)
-        midnight = datetime(t1.year, t1.month, t1.day, tzinfo=TZ)
-        mins_today = (t1 - midnight).total_seconds() / 60
-        if tw and tw < t1 and mins_today >= 120 and t1 > f_since:
+        mins_today = (t1 - datetime(t1.year, t1.month, t1.day, tzinfo=TZ)).total_seconds() / 60
+        if vicino and tw and tw < t1 and mins_today >= 120 and t1 > f_since:
             win = (t1 - tw).total_seconds() / 60
             for k, nome in TREND.items():
                 if k in trend_last and t1 - trend_last[k] < timedelta(minutes=60):
                     continue
-                per = {a: C.delta(a, tw, t1, k) for a in C.aats}
-                per = {a: d for a, d in per.items() if d}
-                tot = sum(per.values())
+                per_z = {a: C.delta(a, tw, t1, k) for a in C.aats}
+                per_z = {a: d for a, d in per_z.items() if d}
+                tot = sum(per_z.values())
                 cr, ce = cum_reg(t1, k), cum_reg(t1, "totale_missioni")
                 dev = [C.delta(z, tw, t1, "totale_missioni") for z in C.aats]
                 if cr is None or not ce or any(d is None for d in dev):
                     continue
-                # atteso = quota di quel motivo negli eventi di oggi x eventi della mezz'ora
-                # (cosi' il normale ciclo giorno/notte non genera falsi allarmi)
+                # atteso = quota di quel motivo nelle schede di oggi x schede della mezz'ora;
+                # probabilita' di vederne almeno 'tot' per caso (Poisson) < 1/1000
                 atteso = cr / ce * sum(dev)
-                # probabilita' di vedere almeno 'tot' casi per puro caso (Poisson): deve essere < 1/1000
-                if len(per) >= 3 and tot >= 5 and poisson_coda(tot, max(atteso, 0.2)) < 0.001:
+                if len(per_z) >= 3 and tot >= 5 and poisson_coda(tot, max(atteso, 0.2)) < 0.001:
                     trend_last[k] = t1
-                    zone_txt = ", ".join(z.capitalize() for z in sorted(per, key=lambda z: -per[z]))
-                    add(t1, "LOMBARDIA", ["regionale"],
-                        [f"Tendenza regionale: {tot} {nome} in {round(win)} minuti in {len(per)} zone ({zone_txt})",
-                         f"di solito oggi sarebbero stati circa {atteso:.0f}"])
+                    zone_txt = ", ".join(z.capitalize() for z in sorted(per_z, key=lambda z: -per_z[z]))
+                    rel(t1, "LOMBARDIA", "regione", f"{tot} {nome} in {round(win)} minuti in {len(per_z)} zone",
+                        f"{zone_txt} · di solito a quest'ora sarebbero circa {atteso:.0f}")
 
         # --- traguardi (pochi e solo rilevanti)
         if t1 > f_since and t0.date() == t1.date() == today:
             r0, r1 = cum_reg(t0), cum_reg(t1)
             if r0 is not None and r1 is not None:
                 if ieri_tot_reg and r0 <= ieri_tot_reg < r1 and t1.hour < 23:
-                    add(t1, "LOMBARDIA", ["traguardo"],
-                        [f"Superate le {ieri_tot_reg:,} missioni di tutta la giornata di ieri".replace(",", "."),
-                         f"oggi sono già {r1:,}".replace(",", ".")])
+                    rel(t1, "LOMBARDIA", "traguardo",
+                        f"Superati i {ieri_tot_reg:,} mezzi inviati in tutta la giornata di ieri".replace(",", "."),
+                        f"oggi sono già {r1:,}".replace(",", "."))
                 if len(past_days) >= 7:
                     mx = max((day_total(d) or 0) for d in past_days)
                     if mx and r0 <= mx < r1:
-                        add(t1, "LOMBARDIA", ["traguardo"],
-                            [f"Giornata più intensa degli ultimi {len(past_days)} giorni: superate le {mx:,} missioni".replace(",", ".")])
+                        rel(t1, "LOMBARDIA", "traguardo",
+                            f"Giornata più intensa degli ultimi {len(past_days)} giorni",
+                            f"superati i {mx:,} mezzi inviati".replace(",", "."))
             if len(past_days) >= 7:
                 for a in C.aats:
                     c0, c1 = (ogg.get(t0, {}).get(a) or {}), (ogg.get(t1, {}).get(a) or {})
@@ -792,18 +1002,57 @@ def build(now: datetime, finals: dict) -> dict:
                     mx = max((day_total(d, a) or 0) for d in past_days)
                     if mx >= 20 and c0.get("missioni") is not None and c1.get("missioni") is not None \
                             and c0["missioni"] <= mx < c1["missioni"]:
-                        add(t1, a, ["traguardo"],
-                            [f"Giornata più intensa degli ultimi {len(past_days)} giorni: superate le {mx} missioni"])
+                        rel(t1, a, "traguardo", f"Giornata più intensa degli ultimi {len(past_days)} giorni",
+                            f"superati i {mx} mezzi inviati")
             if prev_peak_max and not peak_done and t1 in inc:
                 vnow = sum((d.get("missioni") or 0) for d in inc[t1].values())
                 vprev = sum((d.get("missioni") or 0) for d in inc.get(t0, {}).values()) if t0 in inc else 0
                 if vprev <= prev_peak_max < vnow:
                     peak_done = True
-                    add(t1, "LOMBARDIA", ["traguardo"],
-                        [f"Mai così tanti mezzi fuori contemporaneamente negli ultimi 7 giorni: {vnow} "
-                         f"(il massimo precedente era {prev_peak_max})"])
-    feed.reverse()
-    out["feed.json"] = {"eventi": feed[:FEED_MAX]}
+                    rel(t1, "LOMBARDIA", "traguardo", f"Mai così tanti mezzi fuori negli ultimi 7 giorni: {vnow}",
+                        f"il massimo precedente era {prev_peak_max}")
+
+    # esiti delle schede in attesa, scritti sulla voce in cui erano comparse
+    for e in feed:
+        es = e.pop("_es", None)
+        if es:
+            for (chi, txt), n in es.items():
+                e["righe"].append(["Esito", f"{plur(n, *chi)}: {txt}"])
+
+    # --- bilancio di oggi per il pannello "Schede e centrale"
+    ora_now = last.hour
+    def bilancio(a):
+        o = ogg.get(last, {}).get(a)
+        if not o or o.get("day") != today.isoformat() or o.get("totale_missioni") is None:
+            return None
+        c = conti[(a, today.isoformat())]
+        attesa = [u for u in pend[a] if u["day"] == today.isoformat()]
+        senza = c["senza_invio"] + c["scaduta"]
+        return {
+            "schede": o["totale_missioni"], "msb": o.get("msb"),
+            "senza_invio": senza, "senza_rilevate": c["senza_invio"],
+            "in_attesa": len(attesa),
+            "attesa_30": sum(1 for u in attesa if last - u["t"] >= timedelta(minutes=ATTESA_MIN)),
+            "msb_extra": c["rinforzo"] + sum(1 for u in extra[a] if u["day"] == today.isoformat()),
+            "in_ritardo": c["in_ritardo"] + c["scheda_dopo"],
+            "con_mezzo": o["totale_missioni"] - senza - len(attesa),
+            "ore": [ore[(a, today.isoformat())][hh_] if hh_ <= ora_now else None for hh_ in range(24)],
+        }
+    for z in zone:
+        z["schede"] = bilancio(z["aat"])
+    bz = [z["schede"] for z in zone]
+    if bz and all(bz):
+        regione["schede"] = {k: sum(b[k] or 0 for b in bz) for k in bz[0] if k != "ore"}
+        regione["schede"]["ore"] = [None if hh_ > ora_now else [sum(b["ore"][hh_][0] for b in bz),
+                                                                sum(b["ore"][hh_][1] for b in bz)]
+                                    for hh_ in range(24)]
+    else:
+        regione["schede"] = None
+
+    feed.sort(key=lambda e: e["t"], reverse=True)
+    rilevanti = [e for e in feed if e["k"] == "r"]
+    uscite = [e for e in feed if e["k"] == "u"][:FEED_MAX]
+    out["feed.json"] = {"eventi": sorted(rilevanti + uscite, key=lambda e: e["t"], reverse=True)}
     return out
 
 
