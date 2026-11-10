@@ -828,8 +828,8 @@ function renderSchede(){
     <div><div class="v">${fmt(b.con_mezzo_subito)}</div><div class="l">con un mezzo subito</div><div class="s">${p(b.con_mezzo_subito, b.schede) ?? "–"}% · nella stessa lettura</div></div>
     <div><div class="v">${fmt(b.coperte_dopo)}</div><div class="l">mezzo arrivato dopo</div><div class="s">${p(b.coperte_dopo, b.schede) ?? "–"}% · entro 30 minuti</div></div>
     <div><div class="v" style="color:var(--orange)">${rng(b)}</div><div class="l">chiuse senza invio (stima)</div><div class="s">circa ${p(b.senza_invio, b.schede) ?? "–"}% · nessun mezzo in 30 minuti</div></div>
-    <div><div class="v"${b.senza_mezzo ? ' style="color:var(--warn)"' : ""}>${fmt(b.senza_mezzo)}</div><div class="l">senza mezzo adesso</div><div class="s">${b.senza_mezzo ? (etaTxt(b) || "in attesa o già chiuse") : "ogni scheda ha un mezzo"}</div></div>
-    <div><div class="v">${fmt(b.rinforzi)}</div><div class="l">MSB di rinforzo</div><div class="s">su interventi già attivi</div></div>`;
+    <div><div class="v"${b.senza_mezzo ? ' style="color:var(--warn)"' : ""}>${fmt(b.senza_mezzo)}</div><div class="l">senza mezzo adesso</div><div class="s">${b.senza_mezzo ? (etaTxt(b) || "in attesa o già chiuse") : "ogni scheda ha un mezzo"}${b.avanzato_attesa_msb ? ` · +${b.avanzato_attesa_msb} con solo avanzato, in attesa dell'MSB` : ""}</div></div>
+    <div><div class="v">${fmt(b.rinforzi)}</div><div class="l">MSB di rinforzo</div><div class="s">su interventi già attivi · ${fmt(b.msb_dopo_avanzato)} MSB arrivati dopo un avanzato, ${fmt(b.solo_avanzato)} interventi con solo avanzato</div></div>`;
   // grafico: schede per ora, divise in con mezzo / chiuse senza invio
   const ore = b.ore || [], wrap = $("schOre");
   const rows = ore.map((v, h) => v ? {h, tot: v[0], senza: Math.min(v[1], v[0]), con: Math.max(0, v[0] - v[1])} : null);
@@ -861,12 +861,13 @@ function renderSchede(){
   const R = S.L.regione.schede;
   const tr = (a, x, sel, bold) => `<tr data-a="${a}" class="${sel ? "sel" : ""}"${bold ? ' style="font-weight:700"' : ""}><td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${NICE(a)}</td>${[
       fmt(x.schede), fmt(x.con_mezzo_subito), fmt(x.coperte_dopo), rng(x), x.schede ? `${Math.round(x.senza_invio / x.schede * 100)}%` : "–",
-      x.senza_mezzo ? `<span style="color:var(--warn)">${fmt(x.senza_mezzo)}</span>${x.eta_min != null && !bold ? ` <span style="color:var(--muted)">${x.eta_max < 10 ? "nuove" : `${x.eta_min}–${x.eta_max}′`}</span>` : ""}` : "0",
+      (x.senza_mezzo ? `<span style="color:var(--warn)">${fmt(x.senza_mezzo)}</span>${x.eta_min != null && !bold ? ` <span style="color:var(--muted)">${x.eta_max < 10 ? "nuove" : `${x.eta_min}–${x.eta_max}′`}</span>` : ""}` : "0")
+        + (x.avanzato_attesa_msb ? ` <span style="color:var(--muted)" title="con solo mezzo avanzato, in attesa dell'MSB">+${x.avanzato_attesa_msb} av.</span>` : ""),
       fmt(x.rinforzi)
     ].map(v => `<td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${v}</td>`).join("")}</tr>`;
   $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th title="Mezzo partito nella stessa lettura">Subito</th><th title="Mezzo arrivato entro 30 minuti">Dopo</th><th title="Stima: nessun mezzo in 30 minuti">Senza invio</th><th>%</th><th title="Schede che adesso non hanno nessun mezzo">Senza mezzo</th><th title="MSB su interventi già attivi">Rinforzi</th></tr></thead><tbody>${
     zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>
-    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima; quando un secondo metodo indipendente dà un valore diverso si mostra l'intervallo. Le zone con molte schede ogni 10 minuti hanno stime meno precise (±1–2 schede).</div>`;
+    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima; quando un secondo metodo indipendente dà un valore diverso si mostra l'intervallo. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB (riconosciuto dallo stesso codice colore quando ricostruibile). Le zone con molte schede ogni 10 minuti hanno stime meno precise (±1–2 schede).</div>`;
   $("schTab").querySelectorAll("tbody tr").forEach(r => r.onclick = () => { S.focus = r.dataset.a; renderAll(); window.scrollTo({top: 0, behavior: "smooth"}); });
 }
 
