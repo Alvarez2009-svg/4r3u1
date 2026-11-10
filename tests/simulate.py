@@ -101,10 +101,14 @@ LAST_REPORT = {}
 
 
 def payload(sim, t, rnd):
-    def row(aat, soreu, ms, day, agg, day_data):
+    def row(aat, soreu, ms, day, agg, day_data, solo_con_mezzo=False):
         r = {k: 0 for k in ALL_NUM}
         eventi = {}
         for m in ms:
+            # come l'API vera: "in corso" conta solo le schede con un mezzo in missione,
+            # "oggi" conta anche le schede chiuse senza invio
+            if m["tipo"] is None and solo_con_mezzo:
+                continue
             eventi[m["evento"]] = m
             if m["tipo"] is None:
                 continue
@@ -133,7 +137,7 @@ def payload(sim, t, rnd):
         tr = max(tr, LAST_REPORT.get(aat, tr))   # l'orario di aggiornamento non torna indietro
         LAST_REPORT[aat] = tr
         active = [m for m in ms if m["start"] <= tr < m["end"]]
-        in_corso.append(row(aat, soreu, active, "OGGI", tr, tr))
+        in_corso.append(row(aat, soreu, active, "OGGI", tr, tr, solo_con_mezzo=True))
         midnight = tr.replace(hour=0, minute=0, second=0, microsecond=0)
         today = [m for m in ms if midnight <= m["start"] <= tr]
         del_giorno.append(row(aat, soreu, today, "OGGI", tr, tr))

@@ -407,8 +407,7 @@ PARTICOLARI = {"incidente_montano": "Incidente in montagna", "incidente_acqua": 
 SCENA = ("incidente_stradale", "evento_violento", "infortunio", "incidente_montano", "incidente_acqua",
          "incidente_speleo", "evento_massa", "calamita_naturale")
 REGOLARE_MIN = 15     # letture piu' distanti: niente dettaglio fine
-RESIDUO_MIN = 180     # schede ferme nel saldo da 3 ore senza prove: residuo non spiegato (non attesa reale)
-ATTESA_MIN = 30       # soglia "attesa prolungata"
+SCADENZA_MIN = 30     # scheda senza alcun mezzo da 30': probabilmente chiusa senza invio (stima)
 COMPLESSO_EXTRA = 2   # MSB in piu' delle schede nuove in ~20' (calibrato sui dati)
 
 
@@ -651,7 +650,7 @@ def build(now: datetime, finals: dict) -> dict:
     # nella stessa zona a meno di 60' vengono abbinati (stesso intervento, letto in due momenti).
     f_since = last - timedelta(hours=FEED_HOURS)
     midnight_today = datetime(today.year, today.month, today.day, tzinfo=TZ)
-    start = min(f_since, midnight_today) - timedelta(minutes=RESIDUO_MIN + 30)   # il saldo ha memoria
+    start = min(f_since, midnight_today) - timedelta(minutes=SCADENZA_MIN + 30)
     tsf = [t for t in C.ts if t >= start]
     feed = []
     surge_on: dict[str, bool] = {}
@@ -693,17 +692,22 @@ def build(now: datetime, finals: dict) -> dict:
     TREND = {"incidente_stradale": "incidenti stradali", "caduta": "cadute",
              "intossicazione": "intossicazioni", "evento_violento": "eventi violenti"}
 
-    # --- saldo delle schede scoperte, per zona
-    # Il saldo conta le schede che non hanno (ancora) un MSB. Sale quando in una lettura arrivano piu'
-    # schede che MSB; scende SOLO con una prova, mai per il tempo:
-    #   1) parte un MSB "in piu'" (piu' MSB che schede nuove) -> una scheda scoperta e' stata coperta;
-    #   2) tra due letture allineate (oggi e in corso aggiornati insieme, anche non consecutive) si
-    #      chiudono piu' schede di quanti MSB tornano liberi -> schede chiuse senza MSB.
-    # L'eta' del buco e' un intervallo: il buco puo' "ruotare" su una scheda nuova ogni volta che in una
-    # lettura arrivano schede e partono MSB.
-    saldo: dict[str, list] = defaultdict(list)   # unita' scoperte: {"t", "e", "rot"(prima rotazione), "day"}
-    stato: dict[str, dict] = defaultdict(dict)   # dal (saldo > 0 da), rot (ultima rotazione), al (ultima lettura allineata)
-    residuo: dict[str, int] = defaultdict(int)   # schede ferme nel saldo da ore (residuo non spiegato), di oggi
+    # --- schede senza mezzo, per zona (saldo)
+    # Il contatore "oggi" conta TUTTE le schede appena aperte; il contatore "in corso" conta solo le schede
+    # che hanno un mezzo in missione (verificato sui dati: una scheda senza mezzo non vi compare finche' non
+    # parte il primo mezzo). Quindi una scheda senza mezzo e' visibile solo come differenza tra schede nuove
+    # e mezzi partiti, e la sua chiusura senza invio non e' visibile in nessun contatore.
+    # Il saldo:
+    #   - sale con le schede nuove che nella stessa lettura non ricevono nessun mezzo (MSB, oppure MSA1/MSA2,
+    #     elisoccorso o altro mezzo partiti da soli per loro);
+    #   - scende quando parte un MSB "in piu'" (piu' MSB che schede nuove): copertura della scheda piu' vecchia;
+    #   - una scheda senza mezzo da oltre 30' esce come "probabilmente chiusa senza invio" (stima: oltre 30'
+    #     gli MSB in piu' arrivano quasi solo per coincidenza; verificato sui dati e su simulazione).
+    # Un MSB in piu' con il saldo a zero e' un rinforzo su un intervento gia' attivo.
+    # L'eta' del buco e' un intervallo: ogni lettura con schede nuove e MSB puo' "spostare" il buco su una
+    # scheda piu' recente.
+    saldo: dict[str, list] = defaultdict(list)   # schede senza mezzo: {"t", "e", "rot"(prima rotazione), "day", "h"}
+    stato: dict[str, dict] = defaultdict(dict)   # dal (scheda senza mezzo piu' vecchia), rot (ultima rotazione)
     conti: dict[tuple, dict] = defaultdict(lambda: defaultdict(int))     # (zona, giorno) -> contatori
     ore: dict[tuple, list] = defaultdict(lambda: [[0, 0] for _ in range(24)])  # [schede, chiuse senza invio]
     storia: dict[str, list] = defaultdict(list)  # ultimi intervalli per "piu' ambulanze sulla stessa scena"
@@ -717,7 +721,7 @@ def build(now: datetime, finals: dict) -> dict:
             es[txt] = es.get(txt, 0) + 1
 
     def quando(u, t1):
-        """Orario della copertura/chiusura: preciso se il buco non puo' aver ruotato, altrimenti intervallo."""
+        """Orario della copertura: preciso se il buco non puo' aver ruotato, altrimenti intervallo."""
         if u.get("rot") and u["rot"] < t1:
             return f"tra le {hh(u['rot'])} e le {hh(t1)}"
         return f"alle {hh(t1)}"
@@ -755,9 +759,6 @@ def build(now: datetime, finals: dict) -> dict:
                               and None not in (i0.get("missioni"), i1.get("missioni"),
                                                i0.get("totale_missioni"), i1.get("totale_missioni")))
         f["rientri"] = f["dm"] - (i1["missioni"] - i0["missioni"]) if f["allineati"] else None
-        # lettura attuale allineata (per le chiusure misurate tra letture allineate anche lontane)
-        f["ora_allineata"] = bool(i1 and i1.get("agg") == o1.get("agg")
-                                  and None not in (i1.get("missioni"), i1.get("totale_missioni"), i1.get("msb")))
         return f
 
     for t0, t1 in zip(tsf, tsf[1:]):
@@ -805,8 +806,6 @@ def build(now: datetime, finals: dict) -> dict:
                 entry["irr"] = round(gap)
             con_motivo = len(pos) == 1 and not neg and sum(pos.values()) == de_c and de_c >= 1
             st = stato[a]
-            if not f["stesso"]:
-                st.pop("al", None)              # i contatori di oggi ripartono: niente confronti a cavallo
 
             # --- dettaglio dei mezzi partiti (serve anche al saldo: colori e coppie MSB + avanzato)
             rip = None
@@ -833,85 +832,69 @@ def build(now: datetime, finals: dict) -> dict:
                 if len(cs) == 1:
                     msb_cols = {cs[0]: dB}
 
-            # --- saldo: rotazione, nuove schede scoperte, coperture
+            # --- schede senza mezzo: scadenze, rotazione, nuove schede, coperture
             sch_txt = []
-            x = de_c - dB
+            scadute = [u for u in saldo[a] if t1 - u["t"] > timedelta(minutes=SCADENZA_MIN)]
+            for u in scadute:
+                saldo[a].remove(u)
+                conti[(a, u["day"])]["senza_invio"] += 1
+                ore[(a, u["day"])][u["h"]][1] += 1
+                esito(u, f"nessun mezzo in {SCADENZA_MIN} minuti, probabilmente chiusa senza invio")
+            if scadute:
+                sch_txt.append(f"{plur(len(scadute), 'scheda', 'schede')} delle "
+                               f"{', '.join(sorted({hh(u['t']) for u in scadute}))} senza mezzo da {SCADENZA_MIN} "
+                               f"minuti: probabilmente chius{'a' if len(scadute) == 1 else 'e'} senza invio")
             if de_c >= 1 and dB >= 1:
                 # il buco puo' essere passato da una scheda vecchia a una nuova
                 for u in saldo[a]:
                     u.setdefault("rot", t1)
                 st["rot"] = t1
-            if x > 0:
-                # avanzati partiti da soli (non in coppia con un MSB): quelle schede hanno gia' un mezzo sul
-                # posto e aspettano solo l'MSB (es. MSA1 in valle a Sondrio)
-                con_avz = max(0, min(x, adv + max(tp["mezzi_altro"], 0) - coppie))
-                for j in range(x):
-                    saldo[a].append({"t": t1, "e": entry, "day": day, "avz": j < con_avz})
-                testo = f"{x} senza MSB per ora"
-                if coppie and x >= 1:
+            # schede nuove che hanno avuto un mezzo in questa lettura: con un MSB, oppure con un mezzo avanzato
+            # o altro partito da solo (non in coppia con un MSB dello stesso codice)
+            altri = adv + max(tp["mezzi_altro"], 0)
+            liberi = altri - coppie if rip else (altri if dB == 0 else max(0, altri - dB))
+            aperte = de_c if dB >= de_c else dB + min(de_c - dB, max(0, liberi))
+            nuove_senza = de_c - aperte
+            conti[(a, day)]["con_mezzo_subito"] += aperte
+            if nuove_senza > 0:
+                for _ in range(nuove_senza):
+                    saldo[a].append({"t": t1, "e": entry, "day": day, "h": h})
+                testo = f"{nuove_senza} senza mezzo per ora"
+                if coppie:
                     testo += " (probabilmente la meno urgente: l'avanzato è andato con l'MSB)"
                 sch_txt.append(testo)
-            elif x < 0:
-                k = -x
+            k = max(0, dB - de_c)                  # MSB in piu' rispetto alle schede nuove
+            if k:
                 colore = ""
                 if len(msb_cols) == 1:
                     colore = f" [{next(iter(msb_cols))}]"
                 elif msb_cols.get("verde"):
                     colore = " probabilmente [verde]"
-                coperte = togli(a, k, t1, lambda u: f"MSB{colore if not u.get('rot') else ''} partito {quando(u, t1)}")
+                coperte = 0
+                while k > coperte and saldo[a]:
+                    u = saldo[a].pop(0)
+                    esito(u, f"MSB{colore if not u.get('rot') else ''} partito {quando(u, t1)}")
+                    coperte += 1
                 if coperte:
                     conti[(a, day)]["coperte_dopo"] += coperte
                     sch_txt.append(f"{coperte} MSB per {'una scheda' if coperte == 1 else 'schede'} rimast"
-                                   f"{'a' if coperte == 1 else 'e'} senza MSB")
+                                   f"{'a' if coperte == 1 else 'e'} senza mezzo")
                 if k - coperte:
                     conti[(a, day)]["rinforzi"] += k - coperte
-                    sch_txt.append(f"{k - coperte} MSB di rinforzo su intervento già aperto")
+                    sch_txt.append(f"{k - coperte} MSB di rinforzo su intervento già attivo")
                     entry["_rinforzi"] = k - coperte
             if de < 0:
                 sch_txt.append(f"correzione del conteggio: {de} {'scheda' if de == -1 else 'schede'}")
 
-            # --- chiusure misurate tra due letture allineate (anche non consecutive)
-            if f["ora_allineata"]:
-                prev = st.get("al")
-                if prev and prev["day"] == day:
-                    po, pi_ = prev["o"], prev["i"]
-                    chiuse = (o1["totale_missioni"] - po["totale_missioni"]) - (i1["totale_missioni"] - pi_["totale_missioni"])
-                    lib_msb = (o1["msb"] - po["msb"]) - (i1["msb"] - pi_["msb"])
-                    lib_tutti = (o1["missioni"] - po["missioni"]) - (i1["missioni"] - pi_["missioni"])
-                    dal = f"tra le {hh(prev['t'])} e le {hh(t1)}" if prev["t"] != t0 else ""
-                    senza_invio = max(0, chiuse - lib_tutti)      # nessun mezzo di alcun tipo
-                    if senza_invio:
-                        conti[(a, day)]["senza_invio"] += senza_invio
-                        ore[(a, day)][h][1] += senza_invio
-                        sch_txt.append(f"{plur(senza_invio, 'chiusa', 'chiuse')} senza invio di mezzi"
-                                       + (f" ({dal})" if dal else ""))
-                    senza_msb = max(0, chiuse - lib_msb)          # per il saldo: conta solo l'MSB
-                    conti[(a, day)]["chiuse_senza_msb"] += senza_msb
-                    tolte = togli(a, senza_msb, t1, lambda u: f"chiusura senza MSB {quando(u, t1)}")
-                    if tolte > senza_invio:
-                        sch_txt.append(f"{tolte - senza_invio} scopert{'a' if tolte - senza_invio == 1 else 'e'} "
-                                       f"chius{'a' if tolte - senza_invio == 1 else 'e'} senza MSB"
-                                       + (f" ({dal})" if dal else ""))
-                st["al"] = {"t": t1, "o": o1, "i": i1, "day": day}
-
-            # --- residuo: schede ferme nel saldo da ore non sono attesa reale (conto non chiuso)
-            for u in [u for u in saldo[a] if t1 - u["t"] > timedelta(minutes=RESIDUO_MIN)]:
-                saldo[a].remove(u)
-                residuo[a] += 1
-                conti[(a, u["day"])]["residuo"] += 1
-                esito(u, "nessun MSB né chiusura visibile in 3 ore (residuo non spiegato)")
-
             # --- riga del saldo, solo quando cambia
             n_s = len(saldo[a])
             if n_s:
-                st["dal"] = saldo[a][0]["t"]       # eta' massima = la scheda scoperta piu' vecchia
+                st["dal"] = saldo[a][0]["t"]       # eta' massima = la scheda senza mezzo piu' vecchia
             else:
                 st.pop("dal", None)
             if n_s != saldo_prec[a]:
-                if n_s:
-                    entry["righe_saldo"] = f"{plur(n_s, 'scheda scoperta', 'schede scoperte')} nella zona"
-                else:
-                    entry["righe_saldo"] = "in pari: tutte le schede hanno un MSB"
+                entry["righe_saldo"] = (f"{plur(n_s, 'scheda', 'schede')} senza mezzo nella zona" if n_s
+                                        else "tutte le schede hanno un mezzo")
             saldo_prec[a] = n_s
 
             legato = con_motivo and dB == de_c        # ogni scheda nuova ha il suo MSB e il motivo e' unico
@@ -943,7 +926,7 @@ def build(now: datetime, finals: dict) -> dict:
                         f"{n} {'mezzo passato' if n == 1 else 'mezzi passati'} a [{c}]" for c, n in su.items())])
             if f["rientri"] and f["rientri"] > 0:
                 entry["righe"].append(["Rientri", plur(f["rientri"], "mezzo", "mezzi")])
-            if (de or dm or neg or len(entry["righe"]) > 0) and t1 > f_since:
+            if (de or dm or neg or sch_txt) and t1 > f_since:
                 feed.append(entry)
             nuovi_rinforzi = entry.pop("_rinforzi", 0)
 
@@ -1005,31 +988,6 @@ def build(now: datetime, finals: dict) -> dict:
                 rel(t1, a, "complesso", "Probabile intervento con più ambulanze sulla stessa scena",
                     f"{ex_w} MSB in più su un intervento già aperto in circa {mins} minuti, insieme a {avz_txt} · "
                     + testo_motivi({k: v for k, v in agg_mot.items() if k in SCENA}))
-
-            # --- attesa prolungata: certa solo se il buco esiste da oltre 30' e in quei 30' non ha potuto
-            # "ruotare" su schede nuove (nessuna lettura con schede nuove e MSB partiti), e i contatori sono
-            # stati verificati di recente (lettura allineata, quindi le chiusure sarebbero state viste)
-            st = stato[a]
-            senza_nulla = [u for u in saldo[a] if not u.get("avz")]
-            if senza_nulla and st.get("dal"):
-                dal = senza_nulla[0]["t"]
-                ultima_rot = max(dal, st.get("rot") or dal)
-                eta_min = (t1 - ultima_rot).total_seconds() / 60
-                eta_max = (t1 - dal).total_seconds() / 60
-                al = st.get("al")
-                # verificato: c'e' stata una lettura allineata recente e successiva alla comparsa del buco,
-                # quindi una chiusura senza MSB sarebbe stata vista
-                verificato = al and t1 - al["t"] <= timedelta(minutes=20) and al["t"] > ultima_rot
-                if (eta_min >= ATTESA_MIN and verificato
-                        and t1 - ultimo_avviso.get(("attesa", a), datetime.min.replace(tzinfo=TZ)) > timedelta(minutes=60)):
-                    ultimo_avviso[("attesa", a)] = t1
-                    n_s = len(senza_nulla)
-                    eta = f"da {round(eta_min)} minuti" if round(eta_max) - round(eta_min) < 5 else \
-                          f"da {round(eta_min)}–{round(eta_max)} minuti"
-                    rel(t1, a, "attesa", f"{plur(n_s, 'scheda', 'schede')} senza mezzo registrato {eta}",
-                        f"nessun MSB partito per {'lei' if n_s == 1 else 'loro'} dalle {hh(ultima_rot)}, "
-                        f"contatori verificati alle {hh(al['t'])} · può trattarsi anche di un mezzo arrivato "
-                        f"da un'altra zona")
 
         # --- tendenze regionali: lo stesso motivo in piu' zone nella stessa mezz'ora
         tw = C.near(t1 - timedelta(minutes=30), 8)
@@ -1096,6 +1054,7 @@ def build(now: datetime, finals: dict) -> dict:
 
     # --- bilancio di oggi per il pannello "Schede e centrale"
     ora_now = last.hour
+    t_oggi = [t for t in inc if t.date() == today]
     def bilancio(a):
         o = ogg.get(last, {}).get(a)
         if not o or o.get("day") != today.isoformat() or o.get("totale_missioni") is None:
@@ -1107,16 +1066,19 @@ def build(now: datetime, finals: dict) -> dict:
         if n_s and st.get("dal"):
             eta_max = round((last - st["dal"]).total_seconds() / 60)
             eta_min = round((last - max(st["dal"], st.get("rot") or st["dal"])).total_seconds() / 60)
-        al = st.get("al")
+        # stima indipendente delle schede senza invio: schede di oggi - (mezzi di oggi / mezzi per intervento
+        # in corso, media della giornata). Serve come controllo e per dare un intervallo nelle zone grandi.
+        rapp = [inc[t][a]["missioni"] / inc[t][a]["totale_missioni"] for t in t_oggi
+                if (inc[t].get(a) or {}).get("totale_missioni") and inc[t][a].get("missioni") is not None]
+        indip = None
+        if len(rapp) >= 12 and o.get("missioni") is not None:
+            indip = max(0, round(o["totale_missioni"] - o["missioni"] / (sum(rapp) / len(rapp))))
         return {
             "schede": o["totale_missioni"], "msb": o.get("msb"),
-            "con_msb": (o.get("msb") or 0) - c["rinforzi"],          # ogni MSB non di rinforzo copre una scheda
-            "senza_invio": c["senza_invio"],                          # misurate, nessun mezzo
-            "chiuse_senza_msb": c["chiuse_senza_msb"],                # misurate, nessun MSB (anche con avanzato)
-            "scoperte": n_s, "eta_min": eta_min, "eta_max": eta_max,
-            "in_verifica": bool(n_s and (not al or (last - al["t"]) > timedelta(minutes=30))),
-            "verificato_alle": al["t"].isoformat(timespec="minutes") if al else None,
-            "rinforzi": c["rinforzi"], "coperte_dopo": c["coperte_dopo"], "residuo": c["residuo"],
+            "con_mezzo_subito": c["con_mezzo_subito"], "coperte_dopo": c["coperte_dopo"],
+            "senza_invio": c["senza_invio"], "senza_invio_indip": indip,
+            "senza_mezzo": n_s, "eta_min": eta_min, "eta_max": eta_max,
+            "rinforzi": c["rinforzi"],
             "ore": [ore[(a, today.isoformat())][hh_] if hh_ <= ora_now else None for hh_ in range(24)],
         }
     for z in zone:
@@ -1124,8 +1086,9 @@ def build(now: datetime, finals: dict) -> dict:
     bz = [z["schede"] for z in zone]
     if bz and all(bz):
         regione["schede"] = {k: sum(b[k] or 0 for b in bz) for k in bz[0]
-                             if k not in ("ore", "eta_min", "eta_max", "in_verifica", "verificato_alle")}
-        regione["schede"]["in_verifica"] = any(b["in_verifica"] for b in bz)
+                             if k not in ("ore", "eta_min", "eta_max", "senza_invio_indip")}
+        ind = [b["senza_invio_indip"] for b in bz]
+        regione["schede"]["senza_invio_indip"] = sum(ind) if all(v is not None for v in ind) else None
         regione["schede"]["ore"] = [None if hh_ > ora_now else [sum(b["ore"][hh_][0] for b in bz),
                                                                 sum(b["ore"][hh_][1] for b in bz)]
                                     for hh_ in range(24)]
