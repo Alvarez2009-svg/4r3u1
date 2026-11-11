@@ -312,7 +312,7 @@ footer a{color:var(--text-2)}
 
   <footer>
     Dati pubblici di <a href="https://www.areu.lombardia.it" target="_blank" rel="noopener">AREU Lombardia</a>. Progetto personale non ufficiale, non affiliato ad AREU: le elaborazioni e le stime sono dell'autore.
-    I dati sono letti ogni ~10 minuti. "Il solito" è la mediana delle ultime 8 settimane per giorno della settimana e ora.
+    I dati sono letti ogni 5–10 minuti. "Il solito" è la mediana delle ultime 8 settimane per giorno della settimana e ora.
     La durata delle missioni è una stima statistica (legge di Little), non un dato AREU.
     MSB = mezzo di soccorso di base (soccorritori) · MSA1 = mezzo avanzato con infermiere · MSA2 = mezzo avanzato con infermiere e medico (definizioni AREU).
     Scheda = chiamata di soccorso registrata dalla centrale (contata all'apertura); i mezzi sono contati alla partenza. Le schede sono contate quando la centrale le apre, i mezzi quando partono; gli "interventi in corso" sono solo le schede con un mezzo in missione. Una scheda senza mezzo esce dal conto quando parte un MSB in più (orario a intervallo se nel frattempo il buco può essersi spostato su una scheda più recente) oppure dopo 30 minuti, stimata chiusa senza invio. Nel registro i rientri compaiono solo quando i contatori della zona sono allineati. Un MSB e un MSA1/MSA2 con lo stesso codice partiti insieme sono considerati sulla stessa missione.
@@ -645,7 +645,7 @@ function renderFeed(){
   const dove = S.focus === "LOMBARDIA" ? "in Lombardia" : `a ${NICE(S.focus)}`;
   $("feedHelp").textContent = top
     ? "Solo le segnalazioni: elisoccorso, raffiche di codici rossi, eventi particolari, picchi, più ambulanze sulla stessa scena, tendenze regionali, traguardi."
-    : "Ogni ~10 minuti, per ogni zona: schede nuove, mezzi partiti con codice e motivo quando ricostruibili, schede rimaste senza mezzo e come finiscono, rientri.";
+    : "A ogni lettura (5–10 minuti), per ogni zona: schede nuove, mezzi partiti con codice e motivo quando ricostruibili, schede rimaste senza mezzo e come finiscono, rientri.";
   const present = [...new Set(ev.map(e => e.cat))];
   $("feedLeg").innerHTML = top && present.length ? Object.entries(CAT).filter(([k]) => present.includes(k)).map(([, [l, c]]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("") : "";
   if(!ev.length){
@@ -790,7 +790,7 @@ function renderMotivi(){
   $("motWhen").innerHTML = now ? `<span class="live-dot"></span>Adesso` : "Oggi · dalle 00:00";
   $("motHelp").textContent = now ? "Interventi in corso in questo momento, per motivo." : "Schede aperte da mezzanotte, per motivo. Il segno chiaro indica ieri alla stessa ora.";
   const has = o && MOTIVI.some(([k]) => o[k] != null);
-  if(!has){ wrap.innerHTML = `<div class="empty-note">${now ? "I motivi degli eventi in corso compaiono dalla prossima lettura (entro 10 minuti)." : "Nessun dato di oggi."}</div>`; $("motiviRead").innerHTML = ""; return; }
+  if(!has){ wrap.innerHTML = `<div class="empty-note">${now ? "I motivi degli eventi in corso compaiono dalla prossima lettura (entro pochi minuti)." : "Nessun dato di oggi."}</div>`; $("motiviRead").innerHTML = ""; return; }
   const data = MOTIVI.map(([k, l]) => ({k, l, a: o[k] || 0, b: y ? (y[k] || 0) : null})).filter(d => d.a > 0 || (d.b || 0) > 0).sort((p, q) => q.a - p.a).slice(0, 9);
   const W = Math.max(300, wrap.clientWidth), rowH = 22, gap = 7, lw = Math.min(170, W * .42), rw = 40, iw = W - lw - rw;
   const H = data.length * (rowH + gap);
@@ -867,7 +867,7 @@ function renderSchede(){
     ].map(v => `<td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${v}</td>`).join("")}</tr>`;
   $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th title="Mezzo partito nella stessa lettura">Subito</th><th title="Mezzo arrivato entro 30 minuti">Dopo</th><th title="Stima: nessun mezzo in 30 minuti">Senza invio</th><th>%</th><th title="Schede che adesso non hanno nessun mezzo">Senza mezzo</th><th title="MSB su interventi già attivi">Rinforzi</th></tr></thead><tbody>${
     zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>
-    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima; quando un secondo metodo indipendente dà un valore diverso si mostra l'intervallo. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB (riconosciuto dallo stesso codice colore quando ricostruibile). Le zone con molte schede ogni 10 minuti hanno stime meno precise (±1–2 schede).</div>`;
+    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima; quando un secondo metodo indipendente dà un valore diverso si mostra l'intervallo. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB (riconosciuto dallo stesso codice colore quando ricostruibile). Le zone con molte schede a ogni lettura hanno stime meno precise (±1–2 schede).</div>`;
   $("schTab").querySelectorAll("tbody tr").forEach(r => r.onclick = () => { S.focus = r.dataset.a; renderAll(); window.scrollTo({top: 0, behavior: "smooth"}); });
 }
 
