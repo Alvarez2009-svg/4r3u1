@@ -952,6 +952,39 @@ def build(now: datetime, finals: dict) -> dict:
             if de < 0:
                 sch_txt.append(f"correzione del conteggio: {de} {'scheda' if de == -1 else 'schede'}")
 
+            # --- scheda presa in carico senza un mezzo della zona: gli interventi in corso superano i mezzi in
+            # corso (quindi almeno un intervento aperto non ha mezzi della zona), la differenza e' appena salita e
+            # in questa lettura NON si sono liberati piu' mezzi di quanti interventi si sono chiusi (altrimenti e'
+            # solo un mezzo rientrato prima della chiusura della sua scheda). Verificato sui dati: Sondrio 10/11.
+            if (f["stesso"] and i0 and i1 and None not in (i0.get("totale_missioni"), i0.get("missioni"),
+                                                         i1.get("totale_missioni"), i1.get("missioni"))):
+                liv0 = i0["totale_missioni"] - i0["missioni"]
+                liv1 = i1["totale_missioni"] - i1["missioni"]
+                liberati = dm - (i1["missioni"] - i0["missioni"])
+                chiusi = de_c - (i1["totale_missioni"] - i0["totale_missioni"])
+                attese = [u for u in saldo[a] if u["tipo"] == "nessuno"]
+                n_carico = min(liv1 - max(liv0, 0), len(attese)) if liv1 >= 1 and liberati <= chiusi else 0
+                if n_carico > 0:
+                    # prima le schede comparse in questa lettura, poi le piu' vecchie
+                    scelte = sorted(attese, key=lambda u: (u["t"] != t1, u["t"]))[:n_carico]
+                    for u in scelte:
+                        saldo[a].remove(u)
+                        conti[(a, u["day"])]["in_carico_altro"] += 1
+                        esito(u, f"presa in carico alle {hh(t1)} senza un mezzo della zona "
+                                 f"(mezzo non contato o di un'altra zona)")
+                    # le schede appena comparse e subito prese in carico non vanno contate come "senza mezzo"
+                    n_ora = sum(1 for u in scelte if u["t"] == t1)
+                    if n_ora:
+                        vecchio = next((x for x in sch_txt if x.startswith(f"{nuove_senza} senza mezzo per ora")), None)
+                        if vecchio:
+                            j = sch_txt.index(vecchio)
+                            if nuove_senza - n_ora > 0:
+                                sch_txt[j] = vecchio.replace(f"{nuove_senza} senza", f"{nuove_senza - n_ora} senza", 1)
+                            else:
+                                sch_txt.pop(j)
+                        nuove_senza -= n_ora
+                    sch_txt.append(f"{plur(n_carico, 'scheda presa', 'schede prese')} in carico senza un mezzo della zona")
+
             # --- saldo della zona: in coda alla riga Schede se ci sono altre schede senza mezzo,
             # riga a parte solo quando torna a zero
             senza = [u for u in saldo[a] if u["tipo"] == "nessuno"]
@@ -1154,6 +1187,7 @@ def build(now: datetime, finals: dict) -> dict:
             "senza_mezzo": n_s, "eta_min": eta_min, "eta_max": eta_max,
             "avanzato_attesa_msb": n_av, "msb_dopo_avanzato": c["msb_dopo_avanzato"],
             "solo_avanzato": c["solo_avanzato"], "rinforzi": c["rinforzi"],
+            "in_carico_altro": c["in_carico_altro"],
             "ore": [ore[(a, giorno)][hh_] if (giorno != today.isoformat() or hh_ <= ora_now) else None for hh_ in range(24)],
         }
     for z in zone:
