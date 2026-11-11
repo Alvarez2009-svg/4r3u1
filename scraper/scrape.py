@@ -90,7 +90,7 @@ BASELINE_DAYS = 56
 SERIES_DAYS = 7
 HEATMAP_DAYS = 8
 FEED_HOURS = 24
-FEED_MAX = 2000      # voci del registro 'Tutti' (le rilevanti sono sempre tutte)
+FEED_MAX = 4000      # voci del registro 'Tutti' (le rilevanti sono sempre tutte); 24 ore anche a 5 minuti
 GAP_MIN = 40          # oltre questo buco tra letture un'ora non e' calcolabile
 
 
@@ -407,6 +407,12 @@ PARTICOLARI = {"incidente_montano": "Incidente in montagna", "incidente_acqua": 
 SCENA = ("incidente_stradale", "evento_violento", "infortunio", "incidente_montano", "incidente_acqua",
          "incidente_speleo", "evento_massa", "calamita_naturale")
 REGOLARE_MIN = 15     # letture piu' distanti: niente dettaglio fine
+# Il programma funziona con letture ogni 5 o ogni 10 minuti: tutte le regole sono espresse in minuti, non in
+# numero di letture.
+SUBITO_MIN = 6        # MSB arrivato entro 6' (lettura successiva, se si legge ogni 5'): conta come mezzo "subito",
+                      # cosi' le statistiche restano confrontabili con le letture ogni 10'
+PICCO_CONFERMA_MIN = 10   # un picco deve durare almeno 10' (2 letture a 5', 2 a 10') prima di essere segnalato
+RAFFICA_MIN = 10      # i codici rossi si sommano sugli ultimi 10' (una lettura a 10', due a 5')
 SCADENZA_MIN = 30     # scheda senza alcun mezzo da 30': probabilmente chiusa senza invio (stima)
 COMPLESSO_EXTRA = 2   # MSB in piu' delle schede nuove in ~20' (calibrato sui dati)
 
@@ -659,7 +665,8 @@ def build(now: datetime, finals: dict) -> dict:
     tsf = [t for t in C.ts if t >= start]
     feed = []
     surge_on: dict[str, bool] = {}
-    surge_prev: dict[str, str | None] = {}
+    surge_prev: dict[str, datetime] = {}     # da quando la zona e' sopra il solito
+    rossi_rec: dict[str, list] = defaultdict(list)   # (ora, rossi, mezzi) delle letture recenti, per la raffica
     hh = lambda t: t.strftime("%H:%M")
 
     def surge_state(a, t, v):
@@ -780,10 +787,14 @@ def build(now: datetime, finals: dict) -> dict:
                 else:
                     v = (inc.get(t1, {}).get(a) or {}).get("missioni")
                     stt, b = surge_state(a, t1, v)
-                # il picco va confermato da due letture consecutive e non si ripete entro 90 minuti
-                prima_su = surge_prev.get(a) == "su"
-                surge_prev[a] = stt
-                if (stt == "su" and prima_su and not surge_on.get(a)
+                # il picco va confermato: sopra il solito da almeno 10' (non da una sola lettura), e non si ripete
+                # entro 90 minuti
+                if stt == "su":
+                    surge_prev.setdefault(a, t1)
+                else:
+                    surge_prev.pop(a, None)
+                confermato = a in surge_prev and t1 - surge_prev[a] >= timedelta(minutes=PICCO_CONFERMA_MIN - 1)
+                if (stt == "su" and confermato and not surge_on.get(a)
                         and t1 - ultimo_avviso.get(("picco", a), datetime.min.replace(tzinfo=TZ)) > timedelta(minutes=90)):
                     surge_on[a] = True
                     ultimo_avviso[("picco", a)] = t1
@@ -906,7 +917,7 @@ def build(now: datetime, finals: dict) -> dict:
             if k:
                 # colori disponibili tra gli MSB di questa lettura (per riconoscere la coppia con l'avanzato)
                 disp = dict(msb_cols)
-                coppie_dopo, coperte = [], 0
+                coppie_dopo, coperte, rapide = [], 0, 0
                 for _ in range(k):
                     # 1) scheda con solo avanzato e MSB dello stesso codice: completa quella missione
                     u = next((u for u in saldo[a] if u["tipo"] == "avz" and u.get("col") and disp.get(u["col"])), None)
@@ -928,7 +939,10 @@ def build(now: datetime, finals: dict) -> dict:
                         colore = f" [{next(iter(msb_cols))}]" if len(msb_cols) == 1 else \
                                  (" probabilmente [verde]" if msb_cols.get("verde") else "")
                         esito(u, f"MSB{colore if not u.get('rot') else ''} partito {quando(u, t1)}")
-                        coperte += 1
+                        if t1 - u["t"] <= timedelta(minutes=SUBITO_MIN):
+                            rapide += 1      # scheda e MSB divisi solo dalla lettura (si legge ogni 5')
+                        else:
+                            coperte += 1
                 if coppie_dopo:
                     conti[(a, day)]["msb_dopo_avanzato"] += len(coppie_dopo)
                     grp = defaultdict(int)
@@ -940,11 +954,14 @@ def build(now: datetime, finals: dict) -> dict:
                         pezzi_c.append(f"{n_} MSB in coppia con {'l' if n_ == 1 else 'gli'}'{nome}{cu} "
                                        f"partit{'o' if n_ == 1 else 'i'} alle {ora}".replace("gli'", "gli "))
                     sch_txt.append(", ".join(pezzi_c))
+                if rapide:
+                    conti[(a, day)]["con_mezzo_subito"] += rapide
+                    sch_txt.append(f"{rapide} MSB per {'la scheda' if rapide == 1 else 'le schede'} della lettura precedente")
                 if coperte:
                     conti[(a, day)]["coperte_dopo"] += coperte
                     sch_txt.append(f"{coperte} MSB per {'una scheda' if coperte == 1 else 'schede'} rimast"
                                    f"{'a' if coperte == 1 else 'e'} senza mezzo")
-                rinf = k - coperte - len(coppie_dopo)
+                rinf = k - coperte - rapide - len(coppie_dopo)
                 if rinf:
                     conti[(a, day)]["rinforzi"] += rinf
                     sch_txt.append(f"{rinf} MSB di rinforzo su intervento già attivo")
@@ -1049,13 +1066,22 @@ def build(now: datetime, finals: dict) -> dict:
                 v = mot.get(k) or 0
                 if v > 0:
                     segnali.append((4, "particolare", nome if v == 1 else n_nome(v, k).capitalize()))
-            dr = cod.get("rosso") or 0
             o1 = f["o1"]
             quota = (o1.get("rosso") or 0) / o1["missioni"] if o1.get("missioni") else 0.15
             quota = min(max(quota, 0.08), 0.5)
-            # raffica: almeno 3 rossi e improbabili per caso dato il solito tasso di rossi della zona (p < 1%)
-            if regolare and dr >= 3 and dm and coda_binomiale(dr, dm, quota) < 0.01:
-                segnali.append((3, "rossi", f"{dr} mezzi in codice rosso in {round(gap)} minuti"))
+            # raffica: almeno 3 rossi negli ultimi 10' e improbabili per caso dato il solito tasso di rossi della
+            # zona (p < 1%); al massimo una segnalazione ogni 20'
+            if regolare:
+                rossi_rec[a] = [x for x in rossi_rec[a] if t1 - x[0] < timedelta(minutes=RAFFICA_MIN)]
+                rossi_rec[a].append((t1, max(cod.get("rosso") or 0, 0), max(dm, 0), gap))
+            else:
+                rossi_rec[a] = []
+            dr = sum(x[1] for x in rossi_rec[a]); dm_w = sum(x[2] for x in rossi_rec[a])
+            durata = round(sum(x[3] for x in rossi_rec[a]))
+            if (regolare and (cod.get("rosso") or 0) > 0 and dr >= 3 and dm_w and coda_binomiale(dr, dm_w, quota) < 0.01
+                    and t1 - ultimo_avviso.get(("rossi", a), datetime.min.replace(tzinfo=TZ)) > timedelta(minutes=20)):
+                ultimo_avviso[("rossi", a)] = t1
+                segnali.append((3, "rossi", f"{dr} mezzi in codice rosso in {durata} minuti"))
             if segnali:
                 segnali.sort(key=lambda s: -s[0])
                 det = [s[2] for s in segnali[1:]]
