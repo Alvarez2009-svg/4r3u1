@@ -64,6 +64,41 @@ ADESSO_KEYS = ["missioni", "totale_missioni", "rosso", "giallo", "verde", "bianc
 OGGI_KEYS = ADESSO_KEYS[:-len(SERVIZI)] + ["soccorso_alpino"]
 # MSB delle postazioni AREU per zona (presentazione AREU, Forum Risk Management 2025; dal 2026 le postazioni
 # sono di piu'): solo come riferimento. I mezzi sono contati nella zona dell'evento, quindi possono superarle.
+# Postazioni con orari (schede descrittive AREU del bando 2026, file postazioni_2026.csv accanto a questo
+# programma). Lodi e Mantova non hanno una scheda completa: per loro resta il numero AREU 2024.
+POSTAZIONI_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "postazioni_2026.csv")
+
+
+def carica_postazioni() -> dict:
+    out = defaultdict(list)
+    try:
+        with open(POSTAZIONI_FILE, newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                if r["mezzo"] != "MSB":
+                    continue
+                a = int(r["dalle"][:2]) * 60 + int(r["dalle"][3:5])
+                b = int(r["alle"][:2]) * 60 + int(r["alle"][3:5])
+                out[r["zona"]].append((a, b, r["giorni"], float(r["quota_anno"] or 1)))
+    except (OSError, KeyError, ValueError):
+        return {}
+    return dict(out)
+
+
+def msb_in_servizio(post: dict, zona: str, t: datetime):
+    """MSB delle postazioni attive a quest'ora e in questo giorno (le stagionali pesano per la quota dell'anno)."""
+    righe = post.get(zona)
+    if not righe:
+        return None
+    m, wd, tot = t.hour * 60 + t.minute, t.weekday(), 0.0
+    for a, b, giorni, quota in righe:
+        if not (a == b or (a <= m < b if a < b else (m >= a or m < b))):
+            continue
+        if (giorni == "lun-ven" and wd >= 5) or (giorni == "lun-sab" and wd >= 6):
+            continue
+        tot += quota
+    return round(tot)
+
+
 POSTAZIONI_MSB = {"BERGAMO": 32, "BRESCIA": 43, "COMO": 22, "CREMONA": 11, "LECCO": 11, "LODI": 6, "MANTOVA": 14,
                   "MILANO": 116, "MONZA": 17, "PAVIA": 18, "SONDRIO": 13, "VARESE": 26}
 
@@ -597,6 +632,7 @@ def build(now: datetime, finals: dict) -> dict:
     t_ieri = C.near(last - timedelta(hours=24), 25)
     # carico: MSB fuori oltre il 90o percentile della zona negli ultimi 7 giorni. Fuori Milano le schede che
     # aspettano 15' o piu' (o restano senza invio) passano dal 13% al 21% (verificato); a Milano nessun effetto.
+    POST = carica_postazioni()
     p90_msb = {}
     for a in C.aats:
         v = sorted(d[a]["msb"] for t, d in inc.items() if t >= last - timedelta(days=7)
@@ -625,6 +661,8 @@ def build(now: datetime, finals: dict) -> dict:
             "solito_adesso": solito("in_corso", a, last),
             "solito_arrivi_ora": solito("arrivi_ora", a, last),
             "postazioni_msb": POSTAZIONI_MSB.get(a),
+            "msb_servizio": msb_in_servizio(POST, a, last) if a in POST else POSTAZIONI_MSB.get(a),
+            "msb_servizio_fonte": "orari 2026" if a in POST else "AREU 2024, senza orari",
             "msb_p90_7g": p90_msb.get(a),
             "carico_alto": bool(a != "MILANO" and i and p90_msb.get(a) and (i.get("msb") or 0) >= p90_msb[a]
                                 and (i.get("msb") or 0) >= 3),
@@ -783,7 +821,15 @@ def build(now: datetime, finals: dict) -> dict:
     def flusso(a, t0, t1):
         o0, o1 = ogg.get(t0, {}).get(a), ogg.get(t1, {}).get(a)
         i0, i1 = inc.get(t0, {}).get(a), inc.get(t1, {}).get(a)
-        if not o0 or not o1 or not o1.get("day") or not o0.get("day") or o1["day"] < o0["day"]:
+        if not o0 or not o1 or not o1.get("day"):
+            return None
+        if not o0.get("day"):
+            # subito dopo mezzanotte AREU azzera i contatori e per qualche lettura lascia la data vuota: la prima
+            # lettura con la data nuova conta dall'inizio della giornata (prima andava persa ~1 scheda per zona)
+            if any(o0.get(k) for k in ("totale_missioni", "missioni")):
+                return None
+            o0 = {**o0, "day": ""}
+        if o1["day"] < o0["day"]:
             return None
         stesso = o0["day"] == o1["day"]
 
@@ -1162,7 +1208,20 @@ def build(now: datetime, finals: dict) -> dict:
                 elif dB == 0 and de_c == 0 and adv:
                     linea += " · su intervento già in corso"
                 entry["righe"].append(["Mezzi", linea])
-                if not rip and dm > 0:
+                cali = {c: -v for c, v in cod.items() if v is not None and v < 0}
+                if cali and dm >= 0:
+                    # un colore della giornata scende: un mezzo gia' partito ha cambiato codice (di solito declassato
+                    # dopo la valutazione sul posto: da rosso a giallo, da verde a giallo). Gli aumenti dei colori
+                    # comprendono quindi sia i mezzi nuovi sia il mezzo riclassificato.
+                    su = [c for c, v in cod.items() if v and v > 0]
+                    da = ", ".join(f"[{c}]" for c in cali)
+                    a_ = " o ".join(f"[{c}]" for c in su) if su else "un altro codice"
+                    n_c = sum(cali.values())
+                    entry["righe"].append(["Codici", (
+                        f"{plur(dm, 'mezzo nuovo', 'mezzi nuovi')} in {a_}" if dm else "nessun mezzo nuovo")
+                        + f" · {plur(n_c, 'mezzo già partito passato', 'mezzi già partiti passati')} da {da} a {a_}"
+                        + (" (non si sa quale codice abbia il mezzo nuovo)" if dm and len(su) > 1 else "")])
+                elif not rip and dm > 0:
                     tc = testo_colori(cod)
                     if tc:
                         entry["righe"].append(["Codici", tc])
