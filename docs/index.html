@@ -176,6 +176,7 @@ svg text{fill:var(--muted);font:11px var(--sans)}
 .readout .when2{font-family:var(--mono);color:var(--text)}
 .kv{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px}
 .kv div{min-width:0}
+.kv .wide{flex-basis:100%}
 .kv .v{font:700 26px/1.1 var(--mono);letter-spacing:-.03em}
 .kv .l{font-size:12px;color:var(--text-2)}
 
@@ -571,7 +572,15 @@ function renderFleet(){
   $("mezzi").textContent = fmt(a.missioni);
   $("mezziCmp").innerHTML = sol ? `${devTxt(pct(a.missioni, sol.med))} <span style="color:var(--muted)">· di solito ~${fmt(sol.med)}</span>`
     : `<span style="color:var(--muted)">Confronto col solito disponibile dopo ~1 settimana di raccolta</span>`;
-  $("eventi").innerHTML = a.totale_missioni ? `su <b class="num">${fmt(a.totale_missioni)}</b> interventi in corso · ${fmt(a.missioni / a.totale_missioni, 2)} mezzi per intervento` : "";
+  const serv = [["soccorso_secondario", "trasporto secondario", "trasporti secondari"], ["trasporto_organi", "trasporto organi", "trasporti organi"], ["soccorso_alpino", "intervento del Soccorso Alpino", "interventi del Soccorso Alpino"]]
+    .filter(([k]) => a[k] > 0).map(([k, s1, s2]) => `${fmt(a[k])} ${a[k] === 1 ? s1 : s2}`);
+  const extra = [];
+  if(f.senza_mezzo_zona > 0) extra.push(`<span style="color:var(--warn)">${fmt(f.senza_mezzo_zona)} interventi senza un mezzo della zona</span>`);
+  if(f.postazioni_msb && a.msb != null) extra.push(`MSB fuori ${fmt(a.msb)} · postazioni AREU ~${fmt(f.postazioni_msb)}${a.msb > f.postazioni_msb ? " (mezzi anche da altre zone)" : ""}`);
+  if(f.carico_alto) extra.push(`<span style="color:var(--warn)">carico alto per la zona: attese più probabili</span>`);
+  if(serv.length) extra.push(`servizi in corso: ${serv.join(", ")}`);
+  $("eventi").innerHTML = (a.totale_missioni ? `su <b class="num">${fmt(a.totale_missioni)}</b> interventi in corso · ${fmt(a.missioni / a.totale_missioni, 2)} mezzi per intervento` : (a.missioni === 0 ? "nessun intervento in corso" : ""))
+    + (extra.length ? `<br>${extra.join(" · ")}` : "");
   const lomb = S.focus === "LOMBARDIA";
   $("fleet").innerHTML = VEH.map(([k, code, label, col]) => {
     const v = a[k] ?? null, share = a.missioni ? Math.round((v || 0) / a.missioni * 100) : null;
@@ -621,7 +630,7 @@ function renderTiles(){
     const d = sol ? (Math.abs(Math.round(pct(n.missioni, sol.med))) < 5 ? `come al solito` : `${n.missioni >= sol.med ? "+" : ""}${Math.round(pct(n.missioni, sol.med))}% · solito ${fmt(sol.med)}`) : `${fmt(n.rosso)} rossi`;
     const ds = sol ? (Math.abs(Math.round(pct(n.missioni, sol.med))) < 5 ? "=" : `${n.missioni >= sol.med ? "+" : ""}${Math.round(pct(n.missioni, sol.med))}%`) : `${fmt(n.rosso)} ross${n.rosso === 1 ? "o" : "i"}`;
     const sc = z.schede?.senza_mezzo;
-    const dsc = sc ? `<span style="color:var(--warn)"> · ${sc} senza mezzo</span>` : "";
+    const dsc = (sc ? `<span style="color:var(--warn)"> · ${sc} senza mezzo</span>` : "") + (z.carico_alto ? `<span style="color:var(--warn)" title="MSB fuori oltre il 90% delle letture degli ultimi 7 giorni"> · carico alto</span>` : "");
     b.innerHTML = `<span class="ic">${icons}</span><span class="n"><span class="lg">${NICE(a)}</span><span class="sh">${SIGLA[a] || a.slice(0,2)}</span></span><span class="v num">${fmt(n.missioni)}</span><span class="d"><span class="lg">${d}${dsc}</span><span class="sh">${ds}</span></span><span class="mb">${mb}</span>`;
     b.setAttribute("aria-label", `${NICE(a)}: ${fmt(n.missioni)} mezzi in missione${sol ? `, di solito ${fmt(sol.med)}` : ""}`);
     b.setAttribute("aria-pressed", S.focus === a);
@@ -821,15 +830,15 @@ function renderSchede(){
   }
   const p = (n, d) => d ? Math.round(n / d * 100) : null;
   const etaTxt = x => x.eta_min == null ? "" : x.eta_max < 10 ? "appena comparse" : (x.eta_max - x.eta_min < 5 ? `da ${x.eta_min} min` : `da ${x.eta_min}–${x.eta_max} min`);
-  const rng = x => (x.senza_invio_indip != null && Math.abs(x.senza_invio_indip - x.senza_invio) >= 3)
-    ? `${fmt(Math.min(x.senza_invio, x.senza_invio_indip))}–${fmt(Math.max(x.senza_invio, x.senza_invio_indip))}` : fmt(x.senza_invio);
+  const rng = x => fmt(x.senza_invio);
   $("schKv").innerHTML = `
     <div><div class="v">${fmt(b.schede)}</div><div class="l">schede aperte oggi</div></div>
     <div><div class="v">${fmt(b.con_mezzo_subito)}</div><div class="l">con un mezzo subito</div><div class="s">${p(b.con_mezzo_subito, b.schede) ?? "–"}% · nella stessa lettura</div></div>
     <div><div class="v">${fmt(b.coperte_dopo)}</div><div class="l">mezzo arrivato dopo</div><div class="s">${p(b.coperte_dopo, b.schede) ?? "–"}% · entro 30 minuti</div></div>
-    <div><div class="v" style="color:var(--orange)">${rng(b)}</div><div class="l">chiuse senza invio (stima)</div><div class="s">circa ${p(b.senza_invio, b.schede) ?? "–"}% · nessun mezzo in 30 minuti</div></div>
+    <div><div class="v" style="color:var(--orange)">${rng(b)}</div><div class="l">chiuse senza invio (stima)</div><div class="s">circa ${p(b.senza_invio, b.schede) ?? "–"}% · nessun mezzo in 30 minuti${b.doppie ? ` · di cui ${fmt(b.doppie)} chiamat${b.doppie === 1 ? "a doppia" : "e doppie"} per lo stesso incidente` : ""}</div></div>
     <div><div class="v"${b.senza_mezzo ? ' style="color:var(--warn)"' : ""}>${fmt(b.senza_mezzo)}</div><div class="l">senza mezzo adesso</div><div class="s">${b.senza_mezzo ? (etaTxt(b) || "in attesa o già chiuse") : "ogni scheda ha un mezzo"}${b.avanzato_attesa_msb ? ` · +${b.avanzato_attesa_msb} con solo avanzato, in attesa dell'MSB` : ""}</div></div>
-    <div><div class="v">${fmt(b.rinforzi)}</div><div class="l">MSB di rinforzo</div><div class="s">su interventi già attivi · ${fmt(b.msb_dopo_avanzato)} MSB arrivati dopo un avanzato, ${fmt(b.solo_avanzato)} interventi con solo avanzato</div></div>`;
+    <div><div class="v">${fmt(b.rinforzi)}</div><div class="l">MSB di rinforzo</div><div class="s">su interventi già attivi · ${fmt(b.msb_dopo_avanzato)} MSB arrivati dopo un avanzato, ${fmt(b.solo_avanzato)} interventi con solo avanzato</div></div>
+    ${b.controllati ? `<div class="wide"><div class="s">Verifica con gli interventi in corso: ${fmt(b.controllati)} letture controllate oggi, ${fmt(b.corretti || 0)} correzioni (mezzi avanzati o MSB andati su interventi già aperti, coperture arrivate dopo i 30 minuti).</div></div>` : ""}`;
   // grafico: schede per ora, divise in con mezzo / chiuse senza invio
   const ore = b.ore || [], wrap = $("schOre");
   const rows = ore.map((v, h) => v ? {h, tot: v[0], senza: Math.min(v[1], v[0]), con: Math.max(0, v[0] - v[1])} : null);
@@ -867,7 +876,7 @@ function renderSchede(){
     ].map(v => `<td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${v}</td>`).join("")}</tr>`;
   $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th title="Mezzo partito nella stessa lettura">Subito</th><th title="Mezzo arrivato entro 30 minuti">Dopo</th><th title="Stima: nessun mezzo in 30 minuti">Senza invio</th><th>%</th><th title="Schede che adesso non hanno nessun mezzo">Senza mezzo</th><th title="MSB su interventi già attivi">Rinforzi</th></tr></thead><tbody>${
     zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>
-    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima; quando un secondo metodo indipendente dà un valore diverso si mostra l'intervallo. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB (riconosciuto dallo stesso codice colore quando ricostruibile). Le zone con molte schede a ogni lettura hanno stime meno precise (±1–2 schede).</div>`;
+    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima (sbaglia circa 1 volta su 10: alcune vengono coperte più tardi) e comprende le chiamate doppie per lo stesso incidente. Quando le letture lo permettono (nessun mezzo rientrato), ogni conteggio è verificato con gli interventi in corso. A Milano l'età delle schede senza mezzo non è mostrata: con tante schede a ogni lettura l'abbinamento è troppo incerto. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB (riconosciuto dallo stesso codice colore quando ricostruibile). Le zone con molte schede a ogni lettura hanno stime meno precise (±1–2 schede).</div>`;
   $("schTab").querySelectorAll("tbody tr").forEach(r => r.onclick = () => { S.focus = r.dataset.a; renderAll(); window.scrollTo({top: 0, behavior: "smooth"}); });
 }
 
