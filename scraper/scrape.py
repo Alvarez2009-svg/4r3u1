@@ -788,7 +788,8 @@ def build(now: datetime, finals: dict) -> dict:
     ultimo_avviso: dict[tuple, datetime] = {}
     saldo_prec: dict[str, int] = defaultdict(int)
     inc_rec: dict[str, list] = defaultdict(list)    # (lettura, schede per incidente, incidenti in corso prima)
-    scad_rec: dict[str, list] = defaultdict(list)   # schede date per chiuse negli ultimi 30' (possono essere coperte dopo)
+    scad_rec: dict[str, list] = defaultdict(list)
+    anticipo: dict[str, bool] = {}                  # "in corso" aggiornato prima di "oggi" nella lettura precedente   # schede date per chiuse negli ultimi 30' (possono essere coperte dopo)
 
     def esito(u, txt):
         e = u.get("e")
@@ -890,6 +891,15 @@ def build(now: datetime, finals: dict) -> dict:
             f = flusso(a, t0, t1)
             if f is None:
                 continue
+            # A volte "in corso" conta i mezzi partiti una lettura prima di "oggi" (Sondrio 14/11 16:55: +2 mezzi in
+            # corso, 0 negli eventi di oggi, che li contano alle 16:58). I mezzi rientrati verrebbero negativi e poi
+            # gonfiati alla lettura dopo, e i colori sembrerebbero riclassificati: in queste due letture niente
+            # rientri, riclassificazioni ne' controllo con gli interventi in corso (~0,3% degli intervalli).
+            if anticipo.pop(a, False) and f["allineati"]:
+                f["allineati"], f["rientri"] = False, None
+            if f["rientri"] is not None and f["rientri"] < 0:
+                anticipo[a] = True
+                f["allineati"], f["rientri"] = False, None
             day, h = f["o1"]["day"], t1.hour
             de, dm, tp, cod, mot = f["de"], f["dm"], f["tipi"], f["cod"], f["mot"]
             i0, i1, o1 = f["i0"], f["i1"], f["o1"]
@@ -1206,7 +1216,10 @@ def build(now: datetime, finals: dict) -> dict:
                 if legato:
                     linea += " · " + testo_motivi(pos)
                 elif dB == 0 and de_c == 0 and adv:
-                    linea += " · su intervento già in corso"
+                    # il controllo con gli interventi in corso puo' aver visto che l'avanzato ha aperto l'intervento di
+                    # una scheda rimasta in attesa: allora il testo deve dirlo, non "intervento gia' in corso"
+                    linea += (" · per una scheda in attesa (intervento nuovo)" if avz_copre
+                              else " · su intervento già in corso")
                 entry["righe"].append(["Mezzi", linea])
                 cali = {c: -v for c, v in cod.items() if v is not None and v < 0}
                 if cali and dm >= 0:
@@ -1223,6 +1236,15 @@ def build(now: datetime, finals: dict) -> dict:
                         + (" (non si sa quale codice abbia il mezzo nuovo)" if dm and len(su) > 1 else "")])
                 elif not rip and dm > 0:
                     tc = testo_colori(cod)
+                    sc = sum(v for v in cod.values() if v and v > 0)
+                    # i colori a volte arrivano una lettura dopo il mezzo (Brescia 14/11 17:20-17:25): lo si dice,
+                    # invece di attribuire ai mezzi nuovi piu' (o meno) codici di quanti sono (~0,2% degli intervalli)
+                    if sc > dm:
+                        tc += (f" · {plur(sc - dm, 'codice', 'codici')} di "
+                               f"{'un mezzo partito' if sc - dm == 1 else 'mezzi partiti'} prima, assegnat"
+                               f"{'o' if sc - dm == 1 else 'i'} in ritardo")
+                    elif sc < dm:
+                        tc = (tc + " · " if tc else "") + plur(dm - sc, "mezzo ancora senza codice", "mezzi ancora senza codice")
                     if tc:
                         entry["righe"].append(["Codici", tc])
             if sch_txt:
