@@ -152,6 +152,8 @@ button{font:inherit;color:inherit}
 .rw{display:grid;grid-template-columns:74px 1fr;gap:8px;font-size:12.5px;line-height:1.45;margin-top:3px}
 .rw .l{font:600 9.5px/1.95 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .rw.es .l,.rw.es span{color:var(--text-2)}
+.ch{display:inline-block;border-radius:5px;padding:0 6px;margin:1px 4px 1px 0;font-size:12px;line-height:1.6;background:var(--panel-3);color:var(--text-2)}
+.ch.ok{background:rgba(12,163,12,.15);color:#7fd37f}.ch.wt{background:rgba(250,178,25,.15);color:#f5c55c}.ch.ko{background:rgba(217,89,38,.17);color:#f0956b}
 .cd{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 4px 0 1px;vertical-align:0}
 .dsep{font:650 10.5px/1 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:12px 0 4px}
 .cleg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--text-2);margin:-4px 0 8px}
@@ -193,13 +195,34 @@ tbody tr{cursor:pointer}
 tbody tr:hover td{background:var(--panel-2)}
 tr.sel td{background:var(--panel-3)}
 .pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:650}
-.pill.up{background:rgba(230,103,103,.18);color:#f19a9a}.pill.down{background:rgba(57,135,229,.18);color:#86b6ef}.pill.flat{background:var(--panel-3);color:var(--text-2)}
+.pill.up{background:rgba(230,103,103,.18);color:#f19a9a}.pill.down{background:rgba(57,135,229,.18);color:#86b6ef}.pill.flat{background:var(--panel-3);color:var(--text-2)}.pill.hi{background:rgba(250,178,25,.16);color:#f5c55c}
 .warnc{color:var(--warn)}
 
 footer{margin-top:22px;font-size:12px;color:var(--muted);line-height:1.6}
 footer a{color:var(--text-2)}
 .err{display:none;margin:14px 0;padding:10px 12px;border:1px solid var(--crit);background:rgba(208,59,59,.1);border-radius:10px}
 .collect{font-size:12px;color:var(--muted);padding:8px 0}
+.sch-top{display:flex;align-items:baseline;gap:10px;margin:4px 0 10px}
+.sch-top .v{font-family:var(--mono);font-size:34px;font-weight:700;line-height:1}
+.sch-top .l{color:var(--text-2);font-size:14px}
+.sbar{display:flex;height:34px;border-radius:6px;overflow:hidden;gap:2px;background:var(--panel)}
+.sbar>div{display:flex;align-items:center;justify-content:center;min-width:3px;font-family:var(--mono);font-weight:700;font-size:13px;color:#0a0e13;white-space:nowrap;overflow:hidden}
+.sleg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 18px;margin:10px 0 6px}
+.sleg>div{min-width:0}
+.sleg .n{font-family:var(--mono);font-size:20px;font-weight:700}
+.sleg .n small{font-size:12px;color:var(--text-2);font-weight:500;margin-left:6px}
+.sleg .t{font-size:12.5px;color:var(--text-2);display:flex;align-items:center;gap:6px}
+.sleg .t i{width:10px;height:10px;border-radius:2px;flex:none}
+.sleg .d{font-size:12px;color:var(--muted);margin-top:2px}
+.info{border:1px solid var(--line);background:var(--panel-2);color:var(--text-2);border-radius:50%;width:17px;height:17px;font:600 11px/15px var(--mono);padding:0;cursor:pointer;flex:none}
+.info[aria-expanded="true"]{background:var(--text-2);color:var(--bg)}
+.sinfo{font-size:12.5px;color:var(--text-2);background:var(--panel-2);border-left:3px solid var(--blue);border-radius:4px;padding:8px 10px;margin:4px 0 8px}
+.sextra{font-size:12.5px;color:var(--text-2);display:flex;flex-wrap:wrap;gap:6px 16px;margin:2px 0 14px}
+.sextra b{font-family:var(--mono);color:var(--text)}
+details.calc{margin-top:6px;font-size:12px;color:var(--muted)}
+details.calc summary{cursor:pointer;color:var(--text-2);font-size:12.5px;padding:4px 0}
+details.calc p{margin:6px 0}
+@media (max-width:700px){.sleg{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-top .v{font-size:28px}}
 </style>
 </head>
 <body>
@@ -289,12 +312,17 @@ footer a{color:var(--text-2)}
     <!-- schede e centrale -->
     <section class="panel c12">
       <div class="ph"><span class="when">Oggi · dalle 00:00</span><h3>Schede e centrale</h3>
-        <span class="help">La centrale apre una scheda per ogni chiamata di soccorso; il mezzo viene contato solo quando parte. Una parte delle schede si chiude senza invio (risolta al telefono, rifiuto, annullo, chiamata doppia). Una scheda senza mezzo non compare fra gli interventi in corso: la si vede solo come differenza tra schede nuove e mezzi partiti. Se entro 30 minuti parte un MSB in più è "mezzo arrivato dopo", altrimenti la scheda si stima chiusa senza invio.</span></div>
-      <div class="kv" id="schKv"></div>
+        <span class="help">Ogni chiamata di soccorso apre una scheda: ecco come sono finite quelle di oggi.</span></div>
+      <div id="schKv"></div>
       <div class="sch-grid">
         <div><div class="chart" id="schOre"></div><div class="readout" id="schRead"></div></div>
         <div class="tbl-wrap sch-tab" id="schTab"></div>
       </div>
+      <details class="calc"><summary>Come si calcola</summary>
+        <p>La centrale apre una scheda per ogni chiamata di soccorso; il mezzo viene contato solo quando parte. Una scheda senza mezzo non compare fra gli interventi in corso: la si vede solo come differenza tra schede nuove e mezzi partiti. Se entro 30 minuti parte un MSB in più la scheda ha avuto il "mezzo dopo", altrimenti si stima chiusa senza invio (risolta al telefono, rifiuto, annullo, chiamata doppia).</p>
+        <p>Senza invio è una stima: sbaglia circa 1 volta su 10, perché alcune schede vengono coperte più tardi. Comprende le chiamate doppie per lo stesso incidente. Quando le letture lo permettono (nessun mezzo rientrato) ogni conteggio è verificato con gli interventi in corso e, se serve, corretto.</p>
+        <p>In tabella: "Senza mezzo" sono le schede che adesso non hanno nessun mezzo, in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti; a Milano l'età non è mostrata perché con tante schede a ogni lettura l'abbinamento è troppo incerto. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB. Le zone con molte schede a ogni lettura hanno stime meno precise (±1–2 schede).</p>
+      </details>
     </section>
 
     <!-- heatmap -->
@@ -314,7 +342,7 @@ footer a{color:var(--text-2)}
   <footer>
     Dati pubblici di <a href="https://www.areu.lombardia.it" target="_blank" rel="noopener">AREU Lombardia</a>. Progetto personale non ufficiale, non affiliato ad AREU: le elaborazioni e le stime sono dell'autore.
     I dati sono letti ogni 5–10 minuti. "Il solito" è la mediana delle ultime 8 settimane per giorno della settimana e ora.
-    La durata delle missioni è una stima statistica (legge di Little), non un dato AREU.
+    "In servizio" = MSB delle postazioni attive a quell'ora secondo le schede descrittive AREU del bando 2026 (Lodi e Mantova*: numero di postazioni AREU 2024, senza orari); i mezzi sono contati nella zona dove intervengono, quindi "Occupati" può superare il 100%. La durata delle missioni è una stima statistica (legge di Little), non un dato AREU.
     MSB = mezzo di soccorso di base (soccorritori) · MSA1 = mezzo avanzato con infermiere · MSA2 = mezzo avanzato con infermiere e medico (definizioni AREU).
     Scheda = chiamata di soccorso registrata dalla centrale (contata all'apertura); i mezzi sono contati alla partenza. Le schede sono contate quando la centrale le apre, i mezzi quando partono; gli "interventi in corso" sono solo le schede con un mezzo in missione. Una scheda senza mezzo esce dal conto quando parte un MSB in più (orario a intervallo se nel frattempo il buco può essersi spostato su una scheda più recente) oppure dopo 30 minuti, stimata chiusa senza invio. Nel registro i rientri compaiono solo quando i contatori della zona sono allineati. Un MSB e un MSA1/MSA2 con lo stesso codice partiti insieme sono considerati sulla stessa missione.
     Il codice colore di ogni mezzo e il motivo a cui è legato compaiono solo quando la ricostruzione è univoca o molto probabile. Le segnalazioni "più ambulanze sulla stessa scena", "attesa prolungata" e "regione" sono stime statistiche.
@@ -576,7 +604,11 @@ function renderFleet(){
     .filter(([k]) => a[k] > 0).map(([k, s1, s2]) => `${fmt(a[k])} ${a[k] === 1 ? s1 : s2}`);
   const extra = [];
   if(f.senza_mezzo_zona > 0) extra.push(`<span style="color:var(--warn)">${fmt(f.senza_mezzo_zona)} interventi senza un mezzo della zona</span>`);
-  if(f.postazioni_msb && a.msb != null) extra.push(`MSB fuori ${fmt(a.msb)} · postazioni AREU ~${fmt(f.postazioni_msb)}${a.msb > f.postazioni_msb ? " (mezzi anche da altre zone)" : ""}`);
+  const servMsb = S.focus === "LOMBARDIA" ? S.L.zone.reduce((x, z) => x + (z.msb_servizio || 0), 0) : f.msb_servizio;
+  if(servMsb && a.msb != null){
+    const o = Math.round(a.msb / servMsb * 100);
+    extra.push(`MSB fuori ${fmt(a.msb)} su ~${fmt(servMsb)} in servizio a quest'ora (<b>${o}%</b>)${a.msb > servMsb ? " · oltre le postazioni: mezzi aggiuntivi o di altre zone" : ""}${f.msb_servizio_fonte && f.msb_servizio_fonte.startsWith("AREU 2024") ? " · postazioni AREU 2024, senza orari" : ""}`);
+  }
   if(f.carico_alto) extra.push(`<span style="color:var(--warn)">carico alto per la zona: attese più probabili</span>`);
   if(serv.length) extra.push(`servizi in corso: ${serv.join(", ")}`);
   $("eventi").innerHTML = (a.totale_missioni ? `su <b class="num">${fmt(a.totale_missioni)}</b> interventi in corso · ${fmt(a.missioni / a.totale_missioni, 2)} mezzi per intervento` : (a.missioni === 0 ? "nessun intervento in corso" : ""))
@@ -647,6 +679,29 @@ function renderTiles(){
 // ======================================================== registro eventi
 const tok = s => esc(s).replace(/\[(rosso|giallo|verde|bianco)\]/g, (_, c) => `<i class="cd" style="background:var(--${c})"></i>${c}`);
 function schedeTxt(n){ return n == null ? "" : n > 1 ? `${n} nuove schede` : n === 1 ? "1 nuova scheda" : n === 0 ? "nessuna nuova scheda" : "correzione del conteggio"; }
+// registro "Tutti": sempre le stesse righe nello stesso ordine (Nuove, Partiti, Schede, Rientri, Poi)
+const statoScheda = t => /coperta dopo oltre|copert[ae] da un mezzo/.test(t) ? "ok" : /chius|doppi|nessun MSB in|correzione/.test(t) ? "ko"
+  : /senza mezzo per ora|in attesa|con solo/.test(t) ? "wt"
+  : /lettura precedente|MSB per |in coppia|copert|hanno un mezzo/.test(t) ? "ok" : "";
+function griglia(e){
+  const R = {}; const esiti = [];
+  for(const [l, t] of (e.righe || [])) l === "Esito" ? esiti.push(t) : (R[l] = R[l] ? R[l] + " · " + t : t);
+  let mezzi = R.Mezzi || "", motivi = R.Motivi || "";
+  if(!motivi && mezzi.includes(" · ")){ const i = mezzi.indexOf(" · "); motivi = mezzi.slice(i + 3); mezzi = mezzi.slice(0, i); }
+  const nuove = e.sch == null ? "" : e.sch < 0 ? "correzione del conteggio" : e.sch === 0 ? "nessuna" : `${e.sch} ${e.sch === 1 ? "scheda" : "schede"}`;
+  const pezzi = (R.Schede || "").split(" · ").filter(Boolean);
+  const situa = pezzi.filter(x => /^in zona \d+ senza mezzo/.test(x));
+  if(R.Saldo) situa.push(R.Saldo);
+  const chips = pezzi.filter(x => !/^in zona \d+ senza mezzo/.test(x)).map(x => `<span class="ch ${statoScheda(x)}">${tok(x)}</span>`).join("");
+  const partiti = [mezzi || "nessun mezzo", R.Codici, R["Riclassif."] ? "riclassificati: " + R["Riclassif."] : ""].filter(Boolean).join(" · ");
+  const rientri = [R.Rientri, ...situa].filter(Boolean).join(" · ");
+  const riga = (l, h, cls = "") => `<div class="rw${cls}"><span class="l">${l}</span><span>${h}</span></div>`;
+  return riga("Nuove", tok([nuove, motivi].filter(Boolean).join(" · ") || "–"))
+    + riga("Partiti", tok(partiti))
+    + (chips ? riga("Schede", chips) : "")
+    + (rientri ? riga("Rientri", tok(rientri)) : "")
+    + (esiti.length ? riga("Poi", tok(esiti.map(x => x.replace(/^\d+ schede?: /, "")).join(" · ")), " es") : "");
+}
 function renderFeed(){
   const all = S.feed?.eventi || [];
   const top = S.feedMode === "top";
@@ -676,9 +731,9 @@ function renderFeed(){
       return sep + `<div class="fi"><span class="tm">${hhmm(e.t)}</span><span class="br" style="background:var(${c})"></span>
         <div><div class="zz"><span style="color:var(${c})">${esc(l)}</span> · ${esc(zona(e))}</div><div class="fh">${tok(e.tit)}</div>${e.det ? `<div class="fd">${tok(e.det)}</div>` : ""}</div></div>`;
     }
-    const rows = (e.righe || []).map(([l, t]) => `<div class="rw${l === "Esito" ? " es" : ""}"><span class="l">${esc(l)}</span><span>${tok(t)}</span></div>`).join("");
+    const rows = griglia(e);
     return sep + `<div class="fi"><span class="tm">${hhmm(e.t)}</span><span class="br"></span>
-      <div><div class="zz">${esc(zona(e))} <span class="ns">· ${schedeTxt(e.sch)}${e.irr ? ` · letture a ${e.irr} min, dettaglio ridotto` : ""}</span></div>${rows}</div></div>`;
+      <div><div class="zz">${esc(zona(e))}${e.irr ? ` <span class="ns">· letture a ${e.irr} min, dettaglio ridotto</span>` : ""}</div>${rows}</div></div>`;
   }).join("");
 }
 document.querySelectorAll("#feedMode button").forEach(b => b.onclick = () => {
@@ -831,14 +886,38 @@ function renderSchede(){
   const p = (n, d) => d ? Math.round(n / d * 100) : null;
   const etaTxt = x => x.eta_min == null ? "" : x.eta_max < 10 ? "appena comparse" : (x.eta_max - x.eta_min < 5 ? `da ${x.eta_min} min` : `da ${x.eta_min}–${x.eta_max} min`);
   const rng = x => fmt(x.senza_invio);
+  // barra unica: le schede di oggi divise in parti che sommano al totale
+  const attesa = (b.senza_mezzo || 0) + (b.avanzato_attesa_msb || 0);
+  const parti = [
+    ["subito", "Mezzo subito", b.con_mezzo_subito, "var(--blue)", "nella stessa lettura",
+      "MSB o mezzo avanzato partito nella stessa lettura in cui compare la scheda (o in quella successiva, entro 6 minuti)."],
+    ["dopo", "Mezzo arrivato dopo", (b.coperte_dopo || 0) + (b.in_carico_altro || 0), "#7fb2ee", "entro 30 minuti",
+      `MSB partito più tardi per una scheda rimasta senza mezzo: un MSB in più rispetto alle schede nuove della lettura.${b.in_carico_altro ? ` Comprende ${fmt(b.in_carico_altro)} interventi presi in carico senza un mezzo della zona.` : ""}`],
+    ["senza", "Chiuse senza invio", b.senza_invio, "var(--orange)", `stima${b.doppie ? ` · ${fmt(b.doppie)} chiamat${b.doppie === 1 ? "a doppia" : "e doppie"}` : ""}`,
+      `Nessun mezzo in 30 minuti: risolte al telefono, rifiuto, annullo o chiamata doppia.${b.doppie ? ` ${fmt(b.doppie)} sono chiamate doppie per lo stesso incidente (più schede, un solo intervento).` : ""} Sbaglia circa 1 volta su 10: alcune vengono coperte più tardi.`],
+    ["attesa", "Senza mezzo adesso", attesa, "var(--warn)", attesa ? (etaTxt(b) || "in attesa o già chiuse") : "nessuna",
+      `Schede che adesso non hanno ancora un MSB: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono).${b.avanzato_attesa_msb ? ` ${fmt(b.avanzato_attesa_msb)} hanno solo un mezzo avanzato sul posto, in attesa dell'MSB.` : ""}`],
+  ];
+  const tot = Math.max(1, parti.reduce((a, x) => a + (x[2] || 0), 0));
   $("schKv").innerHTML = `
-    <div><div class="v">${fmt(b.schede)}</div><div class="l">schede aperte oggi</div></div>
-    <div><div class="v">${fmt(b.con_mezzo_subito)}</div><div class="l">con un mezzo subito</div><div class="s">${p(b.con_mezzo_subito, b.schede) ?? "–"}% · nella stessa lettura</div></div>
-    <div><div class="v">${fmt(b.coperte_dopo)}</div><div class="l">mezzo arrivato dopo</div><div class="s">${p(b.coperte_dopo, b.schede) ?? "–"}% · entro 30 minuti</div></div>
-    <div><div class="v" style="color:var(--orange)">${rng(b)}</div><div class="l">chiuse senza invio (stima)</div><div class="s">circa ${p(b.senza_invio, b.schede) ?? "–"}% · nessun mezzo in 30 minuti${b.doppie ? ` · di cui ${fmt(b.doppie)} chiamat${b.doppie === 1 ? "a doppia" : "e doppie"} per lo stesso incidente` : ""}</div></div>
-    <div><div class="v"${b.senza_mezzo ? ' style="color:var(--warn)"' : ""}>${fmt(b.senza_mezzo)}</div><div class="l">senza mezzo adesso</div><div class="s">${b.senza_mezzo ? (etaTxt(b) || "in attesa o già chiuse") : "ogni scheda ha un mezzo"}${b.avanzato_attesa_msb ? ` · +${b.avanzato_attesa_msb} con solo avanzato, in attesa dell'MSB` : ""}</div></div>
-    <div><div class="v">${fmt(b.rinforzi)}</div><div class="l">MSB di rinforzo</div><div class="s">su interventi già attivi · ${fmt(b.msb_dopo_avanzato)} MSB arrivati dopo un avanzato, ${fmt(b.solo_avanzato)} interventi con solo avanzato</div></div>
-    ${b.controllati ? `<div class="wide"><div class="s">Verifica con gli interventi in corso: ${fmt(b.controllati)} letture controllate oggi, ${fmt(b.corretti || 0)} correzioni (mezzi avanzati o MSB andati su interventi già aperti, coperture arrivate dopo i 30 minuti).</div></div>` : ""}`;
+    <div class="sch-top"><span class="v">${fmt(b.schede)}</span><span class="l">schede aperte oggi</span></div>
+    <div class="sbar" role="img" aria-label="${parti.map(x => `${x[1]} ${x[2] || 0}`).join(", ")}">${parti.filter(x => x[2] > 0).map(x =>
+      `<div style="flex:${x[2]} 1 0;background:${x[3]}" title="${x[1]}: ${fmt(x[2])}">${x[2] / tot > .045 ? fmt(x[2]) : ""}</div>`).join("")}</div>
+    <div class="sleg">${parti.map(x => `<div><div class="n">${fmt(x[2] || 0)}<small>${p(x[2] || 0, b.schede) ?? "–"}%</small></div>
+      <div class="t"><i style="background:${x[3]}"></i>${x[1]} <button class="info" data-k="${x[0]}" aria-expanded="false" aria-label="Spiegazione: ${x[1]}">i</button></div>
+      <div class="d">${x[4]}</div></div>`).join("")}</div>
+    <div class="sinfo" id="schInfo" hidden></div>
+    <div class="sextra"><span><b>${fmt(b.rinforzi)}</b> MSB di rinforzo su interventi già attivi</span>
+      <span><b>${fmt(b.msb_dopo_avanzato)}</b> MSB arrivati dopo un avanzato</span>
+      <span><b>${fmt(b.solo_avanzato)}</b> interventi con solo avanzato</span>
+      ${b.controllati ? `<span>verificato su <b>${fmt(b.controllati)}</b> letture · <b>${fmt(b.corretti || 0)}</b> correzioni</span>` : ""}</div>`;
+  const info = Object.fromEntries(parti.map(x => [x[0], x[5]]));
+  $("schKv").querySelectorAll(".info").forEach(bt => bt.onclick = () => {
+    const box = $("schInfo"), aperto = bt.getAttribute("aria-expanded") === "true";
+    $("schKv").querySelectorAll(".info").forEach(o => o.setAttribute("aria-expanded", "false"));
+    if(aperto){ box.hidden = true; return; }
+    bt.setAttribute("aria-expanded", "true"); box.textContent = info[bt.dataset.k]; box.hidden = false;
+  });
   // grafico: schede per ora, divise in con mezzo / chiuse senza invio
   const ore = b.ore || [], wrap = $("schOre");
   const rows = ore.map((v, h) => v ? {h, tot: v[0], senza: Math.min(v[1], v[0]), con: Math.max(0, v[0] - v[1])} : null);
@@ -869,14 +948,13 @@ function renderSchede(){
   const zs = S.L.zone.filter(z => z.schede).sort((a, c) => c.schede.schede - a.schede.schede);
   const R = S.L.regione.schede;
   const tr = (a, x, sel, bold) => `<tr data-a="${a}" class="${sel ? "sel" : ""}"${bold ? ' style="font-weight:700"' : ""}><td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${NICE(a)}</td>${[
-      fmt(x.schede), fmt(x.con_mezzo_subito), fmt(x.coperte_dopo), rng(x), x.schede ? `${Math.round(x.senza_invio / x.schede * 100)}%` : "–",
+      fmt(x.schede), fmt(x.con_mezzo_subito), fmt((x.coperte_dopo || 0) + (x.in_carico_altro || 0)), rng(x), x.schede ? `${Math.round(x.senza_invio / x.schede * 100)}%` : "–",
       (x.senza_mezzo ? `<span style="color:var(--warn)">${fmt(x.senza_mezzo)}</span>${x.eta_min != null && !bold ? ` <span style="color:var(--muted)">${x.eta_max < 10 ? "nuove" : `${x.eta_min}–${x.eta_max}′`}</span>` : ""}` : "0")
         + (x.avanzato_attesa_msb ? ` <span style="color:var(--muted)" title="con solo mezzo avanzato, in attesa dell'MSB">+${x.avanzato_attesa_msb} av.</span>` : ""),
       fmt(x.rinforzi)
     ].map(v => `<td${bold ? ' style="border-top:1px solid var(--line)"' : ""}>${v}</td>`).join("")}</tr>`;
   $("schTab").innerHTML = `<table><thead><tr><th>Zona</th><th>Schede</th><th title="Mezzo partito nella stessa lettura">Subito</th><th title="Mezzo arrivato entro 30 minuti">Dopo</th><th title="Stima: nessun mezzo in 30 minuti">Senza invio</th><th>%</th><th title="Schede che adesso non hanno nessun mezzo">Senza mezzo</th><th title="MSB su interventi già attivi">Rinforzi</th></tr></thead><tbody>${
-    zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>
-    <div class="collect">Senza mezzo ora = schede che non hanno ancora nessun mezzo: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono), con l'età possibile in minuti. Senza invio = schede rimaste senza mezzo per 30 minuti: è una stima (sbaglia circa 1 volta su 10: alcune vengono coperte più tardi) e comprende le chiamate doppie per lo stesso incidente. Quando le letture lo permettono (nessun mezzo rientrato), ogni conteggio è verificato con gli interventi in corso. A Milano l'età delle schede senza mezzo non è mostrata: con tante schede a ogni lettura l'abbinamento è troppo incerto. "+N av." = schede con solo un mezzo avanzato sul posto, in attesa dell'MSB (riconosciuto dallo stesso codice colore quando ricostruibile). Le zone con molte schede a ogni lettura hanno stime meno precise (±1–2 schede).</div>`;
+    zs.map(z => tr(z.aat, z.schede, S.focus === z.aat)).join("") + (R ? tr("LOMBARDIA", R, S.focus === "LOMBARDIA", true) : "")}</tbody></table>`;
   $("schTab").querySelectorAll("tbody tr").forEach(r => r.onclick = () => { S.focus = r.dataset.a; renderAll(); window.scrollTo({top: 0, behavior: "smooth"}); });
 }
 
@@ -922,6 +1000,8 @@ function renderTable(){
     ["dev","Δ", z => { const p = z.solito_adesso ? pct(z.adesso?.missioni, z.solito_adesso.med) : null; return p == null ? "–" : `<span class="pill ${devClass(p)}">${p >= 0 ? "+" : ""}${Math.round(p)}%</span>`; }, z => z.solito_adesso ? pct(z.adesso?.missioni, z.solito_adesso.med) : -999],
     ["rosso","Rossi", z => fmt(z.adesso?.rosso), z => z.adesso?.rosso ?? -1],
     ["msb","MSB", z => fmt(z.adesso?.msb), z => z.adesso?.msb ?? -1],
+    ["serv","In servizio", z => z.msb_servizio ? `<span title="MSB delle postazioni attive a quest'ora (${z.msb_servizio_fonte || ""})">${fmt(z.msb_servizio)}${z.msb_servizio_fonte && z.msb_servizio_fonte.startsWith("AREU 2024") ? "*" : ""}</span>` : "–", z => z.msb_servizio ?? -1],
+    ["occ","Occupati", z => { const o = z.msb_servizio ? Math.round((z.adesso?.msb || 0) / z.msb_servizio * 100) : null; return o == null ? "–" : `<span class="pill ${o >= 100 ? "up" : o >= 85 ? "hi" : "flat"}">${o}%</span>`; }, z => z.msb_servizio ? (z.adesso?.msb || 0) / z.msb_servizio : -1],
     ["msi","MSA1", z => fmt(z.adesso?.msi), z => z.adesso?.msi ?? -1],
     ["msa","MSA2", z => fmt(z.adesso?.msa), z => z.adesso?.msa ?? -1],
     ["eli","ELI", z => z.adesso?.elisoccorso ? `<b style="color:var(--orange)">${z.adesso.elisoccorso}</b>` : "0", z => z.adesso?.elisoccorso ?? -1],
@@ -934,7 +1014,8 @@ function renderTable(){
   const [sk, sd] = S.sort, sc = cols.find(c => c[0] === sk) || cols[1];
   const rows = S.L.zone.slice().sort((a, b) => { const x = sc[3](a), y = sc[3](b); return (x > y ? 1 : x < y ? -1 : 0) * sd; });
   const R = S.L.regione;
-  const regRow = { aat: "LOMBARDIA", adesso: R.adesso, solito_adesso: R.solito_adesso, ritmo: R.ritmo, oggi: R.oggi, ieri_stessa_ora: R.ieri_stessa_ora, agg_adesso: hhmm(S.L.snapshot), fermo_da_min: 0 };
+  const servTot = S.L.zone.reduce((a, z) => a + (z.msb_servizio || 0), 0);
+  const regRow = { aat: "LOMBARDIA", msb_servizio: servTot || null, adesso: R.adesso, solito_adesso: R.solito_adesso, ritmo: R.ritmo, oggi: R.oggi, ieri_stessa_ora: R.ieri_stessa_ora, agg_adesso: hhmm(S.L.snapshot), fermo_da_min: 0 };
   $("table").innerHTML = `<table><thead><tr>${cols.map(c => `<th data-k="${c[0]}">${c[1]}${c[0] === sk ? (sd > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead><tbody>${
     rows.map(z => `<tr data-a="${z.aat}" class="${S.focus === z.aat ? "sel" : ""}">${cols.map(c => `<td>${c[2](z)}</td>`).join("")}</tr>`).join("")
   }<tr data-a="LOMBARDIA" class="${S.focus === "LOMBARDIA" ? "sel" : ""}" style="font-weight:700">${cols.map(c => `<td style="border-top:1px solid var(--line)">${c[2](regRow)}</td>`).join("")}</tr></tbody></table>`;
