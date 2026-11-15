@@ -908,6 +908,18 @@ def build(now: datetime, finals: dict) -> dict:
             ore[(a, day)][h][0] += de_c
             pos = {k: v for k, v in mot.items() if k in MOTIVI and v and v > 0}
             neg = {k: -v for k, v in mot.items() if k in MOTIVI and v and v < 0}
+            # se AREU toglie schede, i motivi che scendono sono quelli delle schede tolte, non riclassificazioni
+            tolte_mot = {}
+            if de < 0:
+                resto = -de
+                for k_ in list(neg):
+                    x = min(neg[k_], resto)
+                    if x:
+                        tolte_mot[k_] = x
+                        resto -= x
+                        neg[k_] -= x
+                        if not neg[k_]:
+                            del neg[k_]
             entry = {"t": t1.isoformat(timespec="minutes"), "aat": a, "k": "u", "sch": de, "righe": []}
             if not regolare:
                 entry["irr"] = round(gap)
@@ -1110,7 +1122,11 @@ def build(now: datetime, finals: dict) -> dict:
             for u in coppie_dopo:
                 cb = f" [{u['col']}]" if u.get("col") and msb_cols.get(u["col"]) else ""
                 esito(u, f"MSB{cb} arrivato alle {hh(t1)}")
-            conti[(a, day)]["con_mezzo_subito"] += n_msb + n_avz + rapide
+            conti[(a, day)]["con_mezzo_subito"] += n_msb + n_avz
+            for u, _c in coperti:
+                # nel giorno della scheda: una scheda delle 23:55 coperta dopo mezzanotte resta nel giorno prima
+                conti[(a, u["day"])]["con_mezzo_subito" if t1 - u["t"] <= timedelta(minutes=SUBITO_MIN)
+                                     else "coperte_dopo"] += 1
             if n_avz:
                 grp = defaultdict(int)
                 for u in nuovi_avz:
@@ -1141,7 +1157,6 @@ def build(now: datetime, finals: dict) -> dict:
             if rapide:
                 sch_txt.append(f"{rapide} MSB per {'la scheda' if rapide == 1 else 'le schede'} della lettura precedente")
             if coperte:
-                conti[(a, day)]["coperte_dopo"] += coperte
                 sch_txt.append(f"{coperte} MSB per {'una scheda' if coperte == 1 else 'schede'} rimast"
                                f"{'a' if coperte == 1 else 'e'} senza mezzo")
             if avz_copre:
@@ -1161,7 +1176,19 @@ def build(now: datetime, finals: dict) -> dict:
                     sch_txt.append(f"{rinf} MSB senza scheda nuova (rinforzo o scheda precedente)")
                 entry["_rinforzi"] = rinf
             if de < 0:
-                sch_txt.append(f"correzione del conteggio: {de} {'scheda' if de == -1 else 'schede'}")
+                tolte = 0
+                for _ in range(-de):
+                    u = next((v for v in reversed(saldo[a]) if v["tipo"] == "nessuno"), None)
+                    if not u:
+                        break
+                    saldo[a].remove(u)
+                    togli_esito(u, u.get("es", ""))
+                    esito(u, f"scheda tolta da AREU alle {hh(t1)} (annullata o unita a un'altra)")
+                    conti[(a, u["day"])]["annullate"] += 1
+                    tolte += 1
+                mt = ", ".join(f"{v} {MOT_NOME.get(k, (k,))[0]}" for k, v in tolte_mot.items())
+                sch_txt.append(f"AREU ha tolto {plur(-de, 'scheda', 'schede')}{f' ({mt})' if mt else ''} dal conteggio"
+                               + (f" ({'era' if tolte == 1 else 'erano'} senza mezzo)" if tolte else ""))
 
             # --- scheda presa in carico senza un mezzo della zona: gli interventi in corso superano i mezzi in
             # corso (quindi almeno un intervento aperto non ha mezzi della zona), la differenza e' appena salita e
@@ -1261,8 +1288,11 @@ def build(now: datetime, finals: dict) -> dict:
                                       for c, _, _ in COLORI):
                 su = {c: -(cod[c] - (i1[c] - i0[c])) for c, _, _ in COLORI if cod[c] - (i1[c] - i0[c]) < 0}
                 if su:
+                    # colori scesi piu' di quanto spiegano i rientri: da li' vengono i mezzi riclassificati
+                    giu = [c for c, _, _ in COLORI if cod[c] - (i1[c] - i0[c]) > 0 and c not in su]
+                    da = f" da {' o '.join(f'[{c}]' for c in giu)}" if giu and (f["rientri"] or 0) == 0 else ""
                     entry["righe"].append(["Riclassif.", ", ".join(
-                        f"{n} {'mezzo passato' if n == 1 else 'mezzi passati'} a [{c}]" for c, n in su.items())])
+                        f"{n} {'mezzo passato' if n == 1 else 'mezzi passati'}{da} a [{c}]" for c, n in su.items())])
             if f["rientri"] and f["rientri"] > 0:
                 entry["righe"].append(["Rientri", plur(f["rientri"], "mezzo", "mezzi")])
             if (de or dm or neg or sch_txt) and t1 > f_since:
@@ -1432,7 +1462,7 @@ def build(now: datetime, finals: dict) -> dict:
             "senza_mezzo": n_s, "eta_min": eta_min, "eta_max": eta_max,
             "avanzato_attesa_msb": n_av, "msb_dopo_avanzato": c["msb_dopo_avanzato"],
             "solo_avanzato": c["solo_avanzato"], "rinforzi": c["rinforzi"],
-            "in_carico_altro": c["in_carico_altro"], "doppie": c["doppie"],
+            "in_carico_altro": c["in_carico_altro"], "doppie": c["doppie"], "annullate": c["annullate"],
             "msb_intervento_nuovo": c["msb_intervento_nuovo"], "corretti": c["corretti"],
             "controllati": c["controllati"],
             "ore": [ore[(a, giorno)][hh_] if (giorno != today.isoformat() or hh_ <= ora_now) else None for hh_ in range(24)],
