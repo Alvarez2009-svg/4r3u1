@@ -914,7 +914,8 @@ function renderSchede(){
   const etaTxt = x => x.eta_min == null ? "" : x.eta_max < 10 ? "appena comparse" : (x.eta_max - x.eta_min < 5 ? `da ${x.eta_min} min` : `da ${x.eta_min}–${x.eta_max} min`);
   const rng = x => fmt(x.senza_invio);
   // barra unica: le schede di oggi divise in parti che sommano al totale
-  const attesa = (b.senza_mezzo || 0) + (b.avanzato_attesa_msb || 0);
+  // le schede con solo un mezzo avanzato hanno gia' un mezzo: sono contate in "mezzo subito"/"dopo", non qui
+  const attesa = b.senza_mezzo || 0;
   const parti = [
     ["subito", "Mezzo subito", b.con_mezzo_subito, "var(--blue)", "nella stessa lettura",
       "MSB o mezzo avanzato partito nella stessa lettura in cui compare la scheda (o in quella successiva, entro 6 minuti)."],
@@ -923,7 +924,7 @@ function renderSchede(){
     ["senza", "Chiuse senza invio", b.senza_invio, "var(--orange)", `stima${b.doppie ? ` · ${fmt(b.doppie)} chiamat${b.doppie === 1 ? "a doppia" : "e doppie"}` : ""}`,
       `Nessun mezzo in 30 minuti: risolte al telefono, rifiuto, annullo o chiamata doppia.${b.doppie ? ` ${fmt(b.doppie)} sono chiamate doppie per lo stesso incidente (più schede, un solo intervento).` : ""} Sbaglia circa 1 volta su 10: alcune vengono coperte più tardi.`],
     ["attesa", "Senza mezzo adesso", attesa, "var(--warn)", attesa ? (etaTxt(b) || "in attesa o già chiuse") : "nessuna",
-      `Schede che adesso non hanno ancora un MSB: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono).${b.avanzato_attesa_msb ? ` ${fmt(b.avanzato_attesa_msb)} hanno solo un mezzo avanzato sul posto, in attesa dell'MSB.` : ""}`],
+      `Schede che adesso non hanno ancora un MSB: in attesa oppure già chiuse al telefono (nei primi 30 minuti non si distinguono).${b.avanzato_attesa_msb ? ` Altre ${fmt(b.avanzato_attesa_msb)} hanno solo un mezzo avanzato sul posto, in attesa dell'MSB (contate fra quelle con un mezzo).` : ""}${b.annullate ? ` Oggi AREU ha tolto ${fmt(b.annullate)} schede senza mezzo (annullate o unite ad altre).` : ""}`],
   ];
   $("schKv").innerHTML = `<div class="kv">
     <div><div class="v">${fmt(b.schede)}</div><div class="l">schede aperte oggi</div></div>
