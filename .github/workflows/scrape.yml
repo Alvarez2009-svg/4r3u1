@@ -2,7 +2,7 @@ name: Raccolta dati AREU 118
 
 on:
   schedule:
-    - cron: "3-59/10 * * * *"
+    - cron: "3-59/5 * * * *"
   workflow_dispatch: {}
   push:
     branches: [main]
@@ -13,19 +13,21 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: scrape
-  cancel-in-progress: false
-
 jobs:
+  # 1) Lettura e salvataggio dei dati: non aspetta mai la pubblicazione del sito
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    timeout-minutes: 6
+    concurrency:
+      group: scrape
+      cancel-in-progress: false
     steps:
+      - name: Ritardo di avvio
+        run: echo "Avviato alle $(TZ=Europe/Rome date '+%H:%M:%S'), evento ${{ github.event_name }}"
+
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - uses: actions/setup-python@v6
         with:
@@ -56,11 +58,22 @@ jobs:
           done
           exit 1
 
-      - uses: actions/configure-pages@v5
-
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
+  # 2) Pubblicazione del sito: se ne arriva una più nuova, quella vecchia si annulla
+  deploy:
+    needs: scrape
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
       - id: deploy
         uses: actions/deploy-pages@v5
