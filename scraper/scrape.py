@@ -970,6 +970,16 @@ def build(now: datetime, finals: dict) -> dict:
                           # interventi aperti senza mezzi (es. Como 13/11, ore): la loro chiusura sposterebbe il conto
                           and i0["totale_missioni"] <= i0["missioni"])
             aperti = (i1["totale_missioni"] - i0["totale_missioni"]) if pulito else None
+            # Motivo per motivo (solo senza rientri, dove ogni salita di un motivo in corso e' un'apertura): le schede
+            # nuove di un motivo che non entrano in corso restano senza mezzo; un motivo che sale in corso piu' delle
+            # sue schede nuove e' la copertura di una scheda vecchia di quel motivo. Verificato: il motivo coperto e'
+            # quello di una scheda in attesa nell'85% dei casi (a caso 57%).
+            d_mot = {k: (i1.get(k) or 0) - (i0.get(k) or 0) for k in MOTIVI} if pulito else {}
+            per_motivo = bool(d_mot) and all(v >= 0 for v in d_mot.values())
+            mot_scoperti = {k: max(0, (pos.get(k) or 0) - d_mot[k]) for k in MOTIVI} if per_motivo else {}
+            mot_tardivi = {k: max(0, d_mot[k] - (pos.get(k) or 0)) for k in MOTIVI} if per_motivo else {}
+            mot_scoperti = {k: v for k, v in mot_scoperti.items() if v}
+            mot_tardivi = {k: v for k, v in mot_tardivi.items() if v}
             inc_rec[a] = [x for x in inc_rec[a] if t1 - x[0] <= timedelta(minutes=SCADENZA_MIN + 30)]
             if (pos.get("incidente_stradale") or 0) > 0:
                 inc_rec[a].append((t1, pos["incidente_stradale"], (i0 or {}).get("incidente_stradale")))
@@ -1035,8 +1045,14 @@ def build(now: datetime, finals: dict) -> dict:
             base_u = {"e": entry, "day": day, "h": h, "mot": next(iter(pos)) if con_motivo else None}
             nuovi_avz = [{"t": t1, **base_u, "tipo": "avz", "nome": SIGLE[t_][0], "col": c_} for t_, c_ in soli[:n_avz]]
             saldo[a].extend(nuovi_avz)
-            for _ in range(nuove_senza):
-                saldo[a].append({"t": t1, **base_u, "tipo": "nessuno"})
+            # motivo delle schede rimaste senza mezzo: noto quando i conti per motivo tornano con quelli totali
+            mot_lista = [k_ for k_, v_ in mot_scoperti.items() for _ in range(v_)] \
+                if (mot_scoperti and not base_u["mot"] and sum(mot_scoperti.values()) == nuove_senza) else []
+            for j_ in range(nuove_senza):
+                u_ = {"t": t1, **base_u, "tipo": "nessuno"}
+                if mot_lista:
+                    u_["mot"] = mot_lista[j_]
+                saldo[a].append(u_)
             k = max(0, dB - de_c)                  # MSB in piu' rispetto alle schede nuove
             disp = dict(msb_cols)
             coppie_dopo, coperti = [], []          # coperti: [(scheda, colore del testo)]
@@ -1053,7 +1069,13 @@ def build(now: datetime, finals: dict) -> dict:
                         disp[u["col"]] -= 1
                     coppie_dopo.append(u)
                     continue
-                u = next((u for u in saldo[a] if u["tipo"] == "nessuno"), None)
+                # la scheda piu' vecchia con il motivo che e' salito tra gli interventi in corso; altrimenti la piu' vecchia
+                u = next((u for u in saldo[a] if u["tipo"] == "nessuno" and u["t"] < t1
+                          and mot_tardivi.get(u.get("mot"))), None) if mot_tardivi else None
+                if u:
+                    mot_tardivi[u["mot"]] -= 1
+                else:
+                    u = next((u for u in saldo[a] if u["tipo"] == "nessuno"), None)
                 if not u:
                     break
                 saldo[a].remove(u)
@@ -1093,7 +1115,12 @@ def build(now: datetime, finals: dict) -> dict:
                 while s_ > 0 and rinf > 0:                       # il "rinforzo" ha aperto un intervento nuovo
                     rinf -= 1; s_ -= 1
                     if scad_rec[a]:                              # scheda data per chiusa da poco: coperta in ritardo
-                        _ts, u = scad_rec[a].pop()
+                        # preferisce la scheda con il motivo salito tra gli interventi in corso
+                        j_ = next((j for j in range(len(scad_rec[a]) - 1, -1, -1)
+                                   if mot_tardivi.get(scad_rec[a][j][1].get("mot"))), None) if mot_tardivi else None
+                        _ts, u = scad_rec[a].pop(j_ if j_ is not None else -1)
+                        if j_ is not None:
+                            mot_tardivi[u["mot"]] -= 1
                         conti[(a, u["day"])]["senza_invio"] -= 1
                         ore[(a, u["day"])][u["h"]][1] -= 1
                         if u.pop("doppia", False):
